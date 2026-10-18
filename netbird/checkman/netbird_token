@@ -1,0 +1,30 @@
+title: NetBird: API Token (Personal Access Token)
+agents: netbird
+catalog: cloud/netbird
+license: GPLv3
+distribution: check_mk
+
+item:
+ {User}/{Token name} for service users, {[user] User}/{Token name} for regular users
+ (only if enabled in the special agent rule).
+
+description:
+ This check monitors one NetBird personal access token. Two conditions are
+ evaluated and the worse state wins:
+
+ {Remaining lifetime}: {WARN} at 30 days, {CRIT} at 7 days by default. A token that
+ is already expired is {CRIT}. Optionally an expired token is ignored (service
+ {OK}) once it has been expired for longer than a configurable time.
+
+ {Unused since}: {WARN} if the token was not used for 90 days (default), no {CRIT}
+ by default. A token that was never used counts from its creation date and the text
+ says "never used".
+
+ All thresholds can be configured with the rule "NetBird token".
+
+ Metrics: days until expiry, days since last use.
+
+discovery:
+ One service is created per token. Tokens can be included or excluded by a regular
+ expression on the token name with the rule "NetBird token discovery", for example
+ to leave out spare tokens.
