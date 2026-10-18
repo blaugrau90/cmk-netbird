@@ -38,7 +38,6 @@ def test_defaults_command_line_uses_password_store_reference_only():
     assert args[args.index("--token-id") + 1] == secret
     assert secret.pass_safely is True  # never switched to plain text
     assert "--token" not in args
-    assert "--reference-source" in args and args[args.index("--reference-source") + 1] == "github_fallback"
     assert "--include-users" not in args and "--no-verify-ssl" not in args
 
 
@@ -46,11 +45,10 @@ def test_all_options():
     args = command({
         "token": Secret(1), "base_url": "https://nb.example", "verify_ssl": False, "timeout": 10,
         "proxy": URLProxy(url="http://proxy:3128"), "include_users": True,
-        "reference": ("configured", "0.59.1"),
     })
     assert "--no-verify-ssl" in args and "--include-users" in args
     assert args[args.index("--proxy") + 1] == "http://proxy:3128"
-    assert args[args.index("--reference-version") + 1] == "0.59.1"
+    assert "--reference-source" not in args
     assert args[args.index("--base-url") + 1] == "https://nb.example"
 
 

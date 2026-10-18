@@ -4,12 +4,9 @@
 from cmk.rulesets.v1 import Help, Label, Title
 from cmk.rulesets.v1.form_specs import (
     BooleanChoice,
-    CascadingSingleChoice,
-    CascadingSingleChoiceElement,
     DefaultValue,
     DictElement,
     Dictionary,
-    FixedValue,
     Integer,
     LevelDirection,
     MatchingScope,
@@ -116,43 +113,6 @@ def _special_agent_formspec() -> Dictionary:
                     prefill=DefaultValue(False),
                 ),
             ),
-            "reference": DictElement(
-                required=False,
-                parameter_form=CascadingSingleChoice(
-                    title=Title("Reference version for the version check"),
-                    help_text=Help(
-                        "The version routing peers are compared against. GitHub is queried by "
-                        "the Checkmk server, which needs internet access."
-                    ),
-                    prefill=DefaultValue("github_fallback"),
-                    elements=[
-                        CascadingSingleChoiceElement(
-                            name="github_fallback",
-                            title=Title("Latest GitHub release, fall back to highest peer version"),
-                            parameter_form=FixedValue(value=None),
-                        ),
-                        CascadingSingleChoiceElement(
-                            name="github",
-                            title=Title("Latest GitHub release only (skip check if unavailable)"),
-                            parameter_form=FixedValue(value=None),
-                        ),
-                        CascadingSingleChoiceElement(
-                            name="configured",
-                            title=Title("Fixed target version"),
-                            parameter_form=String(
-                                title=Title("Target version"),
-                                prefill=DefaultValue("0.60.0"),
-                                custom_validate=(validators.LengthInRange(min_value=1),),
-                            ),
-                        ),
-                        CascadingSingleChoiceElement(
-                            name="peers",
-                            title=Title("Highest version among all peers"),
-                            parameter_form=FixedValue(value=None),
-                        ),
-                    ],
-                ),
-            ),
         },
     )
 
@@ -257,43 +217,6 @@ rule_spec_netbird_token_params = CheckParameters(
     title=Title("NetBird token"),
     parameter_form=_token_formspec,
     condition=HostAndItemCondition(item_title=Title("Token (user/name)")),
-)
-
-
-def _network_formspec() -> Dictionary:
-    return Dictionary(
-        title=Title("NetBird network"),
-        help_text=Help(
-            "NetBird is at 0.x, so the minor version is what counts. Peers on a newer "
-            "version than the reference are always OK."
-        ),
-        elements={
-            "minor_levels": DictElement(
-                required=True,
-                parameter_form=SimpleLevels(
-                    title=Title("Minor versions behind the reference"),
-                    form_spec_template=Integer(),
-                    level_direction=LevelDirection.UPPER,
-                    prefill_fixed_levels=DefaultValue((1, 3)),
-                ),
-            ),
-            "major_state": DictElement(
-                required=True,
-                parameter_form=ServiceState(
-                    title=Title("State if a peer is a major version behind"),
-                    prefill=DefaultValue(ServiceState.CRIT),
-                ),
-            ),
-        },
-    )
-
-
-rule_spec_netbird_network_params = CheckParameters(
-    name="netbird_network",
-    topic=Topic.CLOUD,
-    title=Title("NetBird network"),
-    parameter_form=_network_formspec,
-    condition=HostAndItemCondition(item_title=Title("Network name")),
 )
 
 

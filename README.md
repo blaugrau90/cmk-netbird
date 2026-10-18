@@ -25,7 +25,6 @@ The plugin is strictly read-only: the special agent only issues `GET` requests.
   - all active routing peers online → OK, some offline → WARN, none online (also with a single router) → CRIT
   - routers bound to *peer groups* are resolved to peers; a peer counts once
   - offline peers are listed with the age of `last_seen`, and an expired login is pointed out as a likely cause
-  - version check against a reference version (below); overall state is the worse of availability and version
 - The API token is stored in the Checkmk **password store** and is passed to the agent only as a reference.
 - Metrics and graphs: days until expiry, days since last use, routing peers online/total.
 
@@ -46,7 +45,6 @@ NetBird has no endpoint that lists all tokens of an account, so the agent lists 
 | `GET /api/instance/version` | management server version (optional, failure is ignored) |
 | `GET /api/networks`, `GET /api/networks/routers` | networks and routers |
 | `GET /api/networks/{id}/routers` | only if a network's router list is empty |
-| `GET https://api.github.com/repos/netbirdio/netbird/releases/latest` | reference version (optional); the NetBird token is **not** sent there |
 
 The minimal role is **not yet verified** against a real instance (see "To verify" below). A read-only role that can read users, tokens, peers and networks is what you want; if NetBird only lets *admin*/*owner* read other users' tokens, use that for the service user.
 
@@ -56,11 +54,11 @@ NetBird Cloud allows 120 requests per minute; the agent needs roughly *number of
 
 ## Installation
 
-1. Download `netbird-0.2.0.mkp` (or build it, see below).
+1. Download `netbird-0.3.0.mkp` (or build it, see below).
 2. In Checkmk: **Setup → Extension Packages → Upload package**, or as site user:
 
    ```bash
-   mkp add netbird-0.2.0.mkp
+   mkp add netbird-0.3.0.mkp
    mkp enable netbird
    ```
 
@@ -76,41 +74,17 @@ NetBird Cloud allows 120 requests per minute; the agent needs roughly *number of
 | Request timeout | per request, default 30 s |
 | Proxy | optional HTTP/HTTPS proxy (the default uses the environment) |
 | Include tokens of regular users | off by default |
-| Reference version | see below |
 
 6. Run service discovery on the host. Enable periodic service discovery so new tokens and networks show up on their own.
-
-### Reference version
-
-Routing peers are compared against a reference version. NetBird is at 0.x, so the **minor** number counts and (major, minor, patch) are compared:
-
-| Peer vs. reference | Default state |
-|---|---|
-| same minor (other patch), or newer | OK |
-| 1 or more minor versions behind | WARN |
-| 3 or more minor versions behind | CRIT |
-| lower major version | CRIT |
-
-Thresholds are configurable (rule *NetBird network*). Reference source (agent rule):
-
-1. **Latest GitHub release, fall back to the highest peer version** (default). The Checkmk server needs internet access for GitHub. The text always names the source in use.
-2. Latest GitHub release only. If GitHub is not reachable the version check is skipped (with a note).
-3. A fixed target version.
-4. The highest version among all peers.
-
-Versions that cannot be parsed (empty, `development`) never raise an alert; the check names those peers. Pre-release suffixes such as `-rc1` are compared by their base version.
-
----
 
 ## Rules
 
 | Rule (Setup → …) | Purpose |
 |---|---|
-| Agents → Other integrations → **NetBird** | connection, token, proxy, user scope, reference version |
+| Agents → Other integrations → **NetBird** | connection, token, proxy, user scope |
 | Service monitoring rules → **NetBird API** | levels for the agent's own token |
 | Service monitoring rules → **NetBird token** | remaining lifetime, unused-since, ignore long-expired |
 | Service monitoring rules → **NetBird management version** | minor-version levels, major-version state, state for a patch update |
-| Service monitoring rules → **NetBird network** | minor-version levels, state for a major-version difference |
 | Discovery rules → **NetBird token discovery** | include/exclude tokens by name (regular expression) |
 
 All texts are English (the reference plugins are English-only as well).
@@ -122,10 +96,10 @@ All texts are English (the reference plugins are English-only as well).
 ```
 Checkmk check cycle
   └─ special agent  agent_netbird  (runs on the Checkmk site, GET only)
-       ├─ users → tokens per user → peers → networks → network routers → reference version
+       ├─ users → tokens per user → peers → networks → network routers → instance version
        ├─ resolves router peer groups to peers, normalises timestamps and versions
-       └─ prints five sections, one JSON object per line
-  └─ sections: netbird_api  netbird_tokens  netbird_networks  netbird_reference_version  netbird_instance_version
+       └─ prints four sections, one JSON object per line
+  └─ sections: netbird_api  netbird_tokens  netbird_networks  netbird_instance_version
   └─ check plugins: netbird_api · netbird_token · netbird_network · netbird_version
 ```
 
@@ -146,7 +120,6 @@ This plugin was written from the NetBird API documentation. The following points
 | How often is `last_used` updated? | Affects the heuristic that finds the agent's own token and the accuracy of "unused since". |
 | Minimal role of the service user | See above. If tokens of other users cannot be read, the **NetBird API** service is WARN and names the users. |
 | Do router objects carry a network id? | Not needed: the assignment uses `routers` in `GET /api/networks`; the per-network endpoint is the fallback. |
-| Version strings in `version` (empty, `-rc`, `development`) | Parsed by regex; anything unparsable is "unknown version" without a state change. |
 
 Please report what you find in the GitHub issues.
 

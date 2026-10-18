@@ -222,17 +222,9 @@ def test_api_auth_error_mentions_expiry_possibility():
 
 
 # --------------------------------------------------------------- networks
-def peer(pid, name=None, connected=True, version="0.60.2", last_seen=NOW - 60, login_expired=False):
-    parsed = check_parse(version)
+def peer(pid, name=None, connected=True, last_seen=NOW - 60, login_expired=False):
     return {"id": pid, "name": name or pid, "connected": connected, "last_seen_ts": last_seen,
-            "version": version, "version_t": parsed, "login_expired": login_expired}
-
-
-def check_parse(version):
-    import re
-
-    m = re.match(r"^v?(\d+)\.(\d+)(?:\.(\d+))?", version or "")
-    return [int(m.group(1)), int(m.group(2)), int(m.group(3) or 0)] if m else None
+            "login_expired": login_expired}
 
 
 def router(rid, peers, enabled=True):
@@ -247,20 +239,13 @@ def netsec(*networks):
     return check.parse_netbird_networks(table(*networks))
 
 
-def ref(version=(0, 60, 2), source="github", **kw):
-    row = {"requested": "github_fallback", "source": source, "version": list(version) if version else None,
-           "peers_max": None, "error": None}
-    row.update(kw)
-    return row
-
-
-def ncheck(item, networks, reference=None, params=None):
-    return run(check.check_netbird_network_at(item, params or {}, networks, reference, NOW))
+def ncheck(item, networks):
+    return run(check.check_netbird_network_at(item, networks, NOW))
 
 
 def test_network_all_online_ok():
     sec = netsec(net("Office", [router("r1", [peer("p1"), peer("p2")])]))
-    res = ncheck("Office", sec, ref())
+    res = ncheck("Office", sec)
     assert overall(res) == State.OK
     assert "2/2 routing peers online" in text(res)
     assert metrics(res) == {"netbird_routers_online": 2, "netbird_routers_total": 2}
@@ -269,7 +254,7 @@ def test_network_all_online_ok():
 def test_network_some_offline_is_warn_with_details():
     sec = netsec(net("Office", [router("r1", [
         peer("p1"), peer("p2", "router-b", connected=False, last_seen=NOW - 3 * 3600, login_expired=True)])]))
-    res = ncheck("Office", sec, ref())
+    res = ncheck("Office", sec)
     assert overall(res) == State.WARN
     t = text(res)
     assert "1/2 routing peers online" in t
@@ -278,7 +263,7 @@ def test_network_some_offline_is_warn_with_details():
 
 def test_network_none_online_is_crit_even_with_single_router():
     sec = netsec(net("Lab", [router("r1", [peer("p1", connected=False)])]))
-    res = ncheck("Lab", sec, ref())
+    res = ncheck("Lab", sec)
     assert overall(res) == State.CRIT
     assert "No routing peer online" in text(res)
 
@@ -286,7 +271,7 @@ def test_network_none_online_is_crit_even_with_single_router():
 def test_network_disabled_router_not_counted():
     sec = netsec(net("Office", [
         router("r1", [peer("p1")]), router("r2", [peer("p2", connected=False)], enabled=False)]))
-    res = ncheck("Office", sec, ref())
+    res = ncheck("Office", sec)
     assert overall(res) == State.OK
     assert metrics(res)["netbird_routers_total"] == 1
 
@@ -294,19 +279,19 @@ def test_network_disabled_router_not_counted():
 def test_network_duplicate_peer_counts_once():
     sec = netsec(net("Office", [
         router("r1", [peer("p1")]), router("r2", [peer("p1"), peer("p2", connected=False)])]))
-    res = ncheck("Office", sec, ref())
+    res = ncheck("Office", sec)
     assert metrics(res) == {"netbird_routers_online": 1, "netbird_routers_total": 2}
     assert overall(res) == State.WARN
 
 
 def test_network_group_router_with_no_peers_is_crit():
     sec = netsec(net("Office", [router("r1", [])]))
-    assert overall(ncheck("Office", sec, ref())) == State.CRIT
+    assert overall(ncheck("Office", sec)) == State.CRIT
 
 
 def test_network_never_seen_peer_text():
     sec = netsec(net("Office", [router("r1", [peer("p1"), peer("p2", connected=False, last_seen=None)])]))
-    assert "never seen" in text(ncheck("Office", sec, ref()))
+    assert "never seen" in text(ncheck("Office", sec))
 
 
 def test_discovery_only_networks_with_active_router():
@@ -315,103 +300,11 @@ def test_discovery_only_networks_with_active_router():
         net("B", [router("r2", [peer("p1")], enabled=False)], "b"),
         net("C", [], "c"),
     )
-    assert [s.item for s in check.discover_netbird_network(sec, None)] == ["A"]
+    assert [s.item for s in check.discover_netbird_network(sec)] == ["A"]
 
 
 def test_vanished_network_yields_nothing():
-    assert ncheck("gone", netsec(), ref()) == []
-
-
-# ---------------------------------------------------------------- versions
-@pytest.mark.parametrize(
-    "peer_version, state",
-    [
-        ("0.60.2", State.OK),
-        ("0.60.0", State.OK),  # same minor, other patch
-        ("0.61.0", State.OK),  # newer than reference
-        ("0.59.9", State.WARN),
-        ("0.58.0", State.WARN),
-        ("0.57.9", State.CRIT),  # 3 minors behind
-        ("0.10.0", State.CRIT),
-    ],
-)
-def test_version_minor_distance(peer_version, state):
-    sec = netsec(net("N", [router("r1", [peer("p1", version=peer_version)])]))
-    assert overall(ncheck("N", sec, ref((0, 60, 2)))) == state
-
-
-def test_version_major_difference_is_crit():
-    sec = netsec(net("N", [router("r1", [peer("p1", version="0.99.0")])]))
-    assert overall(ncheck("N", sec, ref((1, 0, 0)))) == State.CRIT
-
-
-def test_version_major_state_configurable():
-    sec = netsec(net("N", [router("r1", [peer("p1", version="0.99.0")])]))
-    assert overall(ncheck("N", sec, ref((1, 0, 0)), {"major_state": 1})) == State.WARN
-
-
-def test_version_custom_minor_levels():
-    sec = netsec(net("N", [router("r1", [peer("p1", version="0.58.0")])]))
-    assert overall(ncheck("N", sec, ref((0, 60, 2)), {"minor_levels": ("fixed", (3, 6))})) == State.OK
-
-
-@pytest.mark.parametrize("version", ["", "development", "garbage", None])
-def test_unparsable_version_is_not_crit_and_is_mentioned(version):
-    sec = netsec(net("N", [router("r1", [peer("p1", version=version or "")])]))
-    res = ncheck("N", sec, ref())
-    assert overall(res) == State.OK
-    assert "Version unknown" in text(res)
-    assert "up to date" not in text(res)  # nothing was actually compared
-
-
-def test_rc_version_is_compared_by_base_version():
-    sec = netsec(net("N", [router("r1", [peer("p1", version="0.60.2-rc1")])]))
-    assert overall(ncheck("N", sec, ref((0, 60, 2)))) == State.OK
-
-
-def test_status_is_max_of_availability_and_version():
-    sec = netsec(net("N", [router("r1", [peer("p1", version="0.40.0"), peer("p2", connected=False)])]))
-    assert overall(ncheck("N", sec, ref())) == State.CRIT
-    sec = netsec(net("N", [router("r1", [peer("p1", version="0.59.0"), peer("p2", connected=False)])]))
-    assert overall(ncheck("N", sec, ref())) == State.WARN
-
-
-def test_version_text_names_outdated_peer_and_reference_source():
-    sec = netsec(net("N", [router("r1", [peer("p1", "old-router", version="0.57.0")])]))
-    res = ncheck("N", sec, ref())
-    assert "old-router" in text(res)
-    assert "latest GitHub release" in (results(res)[-1].details or text(res))
-
-
-def test_reference_fallback_to_peers_max_when_github_failed():
-    sec = netsec(net("N", [router("r1", [peer("p1", version="0.50.0")])]))
-    reference = ref(version=None, source="github", peers_max=[0, 60, 0], error="GitHub lookup failed: timeout")
-    res = ncheck("N", sec, reference)
-    assert overall(res) == State.CRIT  # 10 minors behind the highest peer version
-    assert "highest peer version" in (results(res)[-1].details or "") + text(res)
-    assert "GitHub lookup failed" in (results(res)[-1].details or "") + text(res)
-
-
-def test_reference_strict_github_failure_skips_version_check():
-    sec = netsec(net("N", [router("r1", [peer("p1", version="0.1.0")])]))
-    reference = ref(version=None, requested="github", error="GitHub lookup failed: timeout")
-    res = ncheck("N", sec, reference)
-    assert overall(res) == State.OK
-    assert "Version check skipped" in text(res)
-
-
-def test_reference_missing_section_falls_back_to_router_peers():
-    sec = netsec(net("N", [router("r1", [peer("p1", version="0.60.2"), peer("p2", version="0.58.0")])]))
-    res = ncheck("N", sec, None)
-    assert overall(res) == State.WARN
-
-
-def test_reference_configured():
-    sec = netsec(net("N", [router("r1", [peer("p1", version="0.58.0")])]))
-    reference = ref(version=(0, 58, 5), source="configured", requested="configured")
-    res = ncheck("N", sec, reference)
-    assert overall(res) == State.OK
-    assert "configured" in text(res)
+    assert ncheck("gone", netsec()) == []
 
 
 # ------------------------------------------------------------ section parsing
@@ -430,12 +323,10 @@ def test_check_function_signatures_match_what_checkmk_expects():
 
     assert names(check.check_netbird_api) == ["params", "section"]
     assert names(check.check_netbird_token) == ["item", "params", "section"]
-    assert names(check.check_netbird_network) == [
-        "item", "params", "section_netbird_networks", "section_netbird_reference_version"]
+    assert names(check.check_netbird_network) == ["item", "section"]
     assert names(check.discover_netbird_api) == ["section"]
     assert names(check.discover_netbird_token) == ["params", "section"]
-    assert names(check.discover_netbird_network) == [
-        "section_netbird_networks", "section_netbird_reference_version"]
+    assert names(check.discover_netbird_network) == ["section"]
 
 
 def test_public_check_functions_run_with_the_current_time():

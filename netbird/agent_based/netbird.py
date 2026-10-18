@@ -5,7 +5,6 @@ Sections (JSON, one object per line), written by agent_netbird:
 - netbird_api: connectivity, partial failures, the agent's own token
 - netbird_tokens: personal access tokens
 - netbird_networks: networks with their resolved routing peers
-- netbird_reference_version: reference NetBird version for the peer version check
 - netbird_instance_version: management/dashboard version of the instance
 
 Check plugins:
@@ -41,10 +40,6 @@ TOKEN_DEFAULTS: Mapping[str, Any] = {
     "unused_warn": 90 * DAY,
     "unused_crit": None,
     "ignore_expired_after": None,
-}
-NETWORK_DEFAULTS: Mapping[str, Any] = {
-    "minor_levels": ("fixed", (1, 3)),
-    "major_state": 2,
 }
 VERSION_DEFAULTS: Mapping[str, Any] = {
     "minor_levels": ("fixed", (1, 3)),
@@ -301,7 +296,7 @@ check_plugin_netbird_token = CheckPlugin(
 
 
 # --------------------------------------------------------------------------
-# netbird_networks / netbird_reference_version
+# netbird_networks
 # --------------------------------------------------------------------------
 
 
@@ -312,11 +307,6 @@ def parse_netbird_networks(string_table: StringTable) -> dict[str, dict[str, Any
         if row.get("name")
     ]
     return _unique_items(rows)
-
-
-def parse_netbird_reference_version(string_table: StringTable) -> dict[str, Any] | None:
-    rows = _json_rows(string_table)
-    return rows[0] if rows else None
 
 
 def active_router_peers(network: dict[str, Any]) -> list[dict[str, Any]]:
@@ -334,93 +324,18 @@ def _has_active_router(network: dict[str, Any]) -> bool:
     return any(router.get("enabled") for router in network.get("routers") or [])
 
 
-def discover_netbird_network(
-    section_netbird_networks: dict[str, dict[str, Any]] | None,
-    section_netbird_reference_version: dict[str, Any] | None,
-) -> DiscoveryResult:
-    for item, network in (section_netbird_networks or {}).items():
+def discover_netbird_network(section: dict[str, dict[str, Any]]) -> DiscoveryResult:
+    for item, network in section.items():
         if _has_active_router(network):
             yield Service(item=item)
 
 
-_REFERENCE_LABEL = {
-    "github": "latest GitHub release",
-    "configured": "configured",
-    "peers": "highest peer version",
-}
+def check_netbird_network(item: str, section: dict[str, dict[str, Any]]) -> CheckResult:
+    yield from check_netbird_network_at(item, section, time.time())
 
 
-def resolve_reference(
-    reference: dict[str, Any] | None, networks: dict[str, dict[str, Any]]
-) -> tuple[tuple[int, int, int] | None, str]:
-    """Return (version, description of where it comes from)."""
-    reference = reference or {}
-    version = reference.get("version")
-    source = reference.get("source", "peers")
-    note = ""
-    if not version and reference.get("requested") in ("github_fallback", "github", "configured"):
-        note = f" ({reference.get('error') or 'lookup failed'})"
-        if reference.get("requested") != "github_fallback":
-            return None, f"reference version unavailable{note}"
-        source = "peers"
-        version = reference.get("peers_max")
-        note = f" - fallback, {reference.get('error') or 'GitHub lookup failed'}"
-    elif not version:
-        source = "peers"
-        version = reference.get("peers_max")
-    if not version:
-        # last resort: highest version among the peers we know
-        found = [
-            tuple(p["version_t"])
-            for n in networks.values()
-            for p in active_router_peers(n)
-            if p.get("version_t")
-        ]
-        if not found:
-            return None, "no reference version available"
-        version, source = list(max(found)), "peers"
-    label = _REFERENCE_LABEL.get(source, source)
-    return (version[0], version[1], version[2]), f"{'.'.join(map(str, version))} ({label}){note}"
-
-
-def _version_state(
-    peer: tuple[int, int, int], ref: tuple[int, int, int], params: Mapping[str, Any]
-) -> tuple[State, str]:
-    if peer >= ref:
-        return State.OK, ""
-    if peer[0] < ref[0]:
-        return _state(_p(params, "major_state", NETWORK_DEFAULTS), State.CRIT), "major version behind"
-    behind = ref[1] - peer[1]
-    if behind <= 0:
-        return State.OK, ""
-    levels = _levels(params, "minor_levels", NETWORK_DEFAULTS)
-    state = State.OK
-    if levels:
-        warn, crit = levels
-        state = State.CRIT if behind >= crit else State.WARN if behind >= warn else State.OK
-    return state, f"{behind} minor version{'s' if behind != 1 else ''} behind"
-
-
-def check_netbird_network(
-    item: str,
-    params: Mapping[str, Any],
-    section_netbird_networks: dict[str, dict[str, Any]] | None,
-    section_netbird_reference_version: dict[str, Any] | None,
-) -> CheckResult:
-    yield from check_netbird_network_at(
-        item, params, section_netbird_networks, section_netbird_reference_version, time.time()
-    )
-
-
-def check_netbird_network_at(
-    item: str,
-    params: Mapping[str, Any],
-    section_netbird_networks: dict[str, dict[str, Any]] | None,
-    section_netbird_reference_version: dict[str, Any] | None,
-    now: float,
-) -> CheckResult:
-    networks = section_netbird_networks or {}
-    network = networks.get(item)
+def check_netbird_network_at(item: str, section: dict[str, dict[str, Any]], now: float) -> CheckResult:
+    network = section.get(item)
     if network is None:
         return
 
@@ -453,60 +368,38 @@ def check_netbird_network_at(
             parts.append(piece + ")")
         yield Result(state=State.OK, summary="Offline: " + ", ".join(parts))
 
-    # --- version check ---
-    ref, ref_text = resolve_reference(section_netbird_reference_version, networks)
-    if ref is None:
-        yield Result(state=State.OK, summary=f"Version check skipped: {ref_text}")
-        return
-    worst = State.OK
-    outdated: list[str] = []
-    unknown: list[str] = []
-    for peer in sorted(peers, key=lambda p: str(p.get("name"))):
-        parsed = peer.get("version_t")
-        if not parsed:
-            shown = peer.get("version") or "empty"
-            unknown.append(f"{peer.get('name')} ({shown})")
-            continue
-        state, reason = _version_state((parsed[0], parsed[1], parsed[2]), ref, params)
-        if state != State.OK or reason:
-            outdated.append(f"{peer.get('name')} {peer.get('version')}: {reason}")
-        worst = _worst(worst, state)
-    known = len(peers) - len(unknown)
-    if outdated:
-        yield Result(
-            state=worst,
-            summary=f"Outdated: {', '.join(outdated)}",
-            details=f"Reference version {ref_text}",
-        )
-    elif known:
-        yield Result(state=State.OK, summary=f"Versions up to date (reference {ref_text})")
-    if unknown:
-        yield Result(
-            state=State.OK,
-            summary=f"Version unknown for {', '.join(unknown)}",
-        )
-
 
 check_plugin_netbird_network = CheckPlugin(
     name="netbird_network",
-    sections=["netbird_networks", "netbird_reference_version"],
+    sections=["netbird_networks"],
     service_name="NetBird Network %s",
     discovery_function=discover_netbird_network,
     check_function=check_netbird_network,
-    check_ruleset_name="netbird_network",
-    check_default_parameters=dict(NETWORK_DEFAULTS),
 )
 
 agent_section_netbird_networks = AgentSection(name="netbird_networks", parse_function=parse_netbird_networks)
 
-agent_section_netbird_reference_version = AgentSection(
-    name="netbird_reference_version", parse_function=parse_netbird_reference_version
-)
-
-
 # --------------------------------------------------------------------------
 # netbird_instance_version
 # --------------------------------------------------------------------------
+
+
+def _version_state(
+    peer: tuple[int, int, int], ref: tuple[int, int, int], params: Mapping[str, Any]
+) -> tuple[State, str]:
+    if peer >= ref:
+        return State.OK, ""
+    if peer[0] < ref[0]:
+        return _state(_p(params, "major_state", VERSION_DEFAULTS), State.CRIT), "major version behind"
+    behind = ref[1] - peer[1]
+    if behind <= 0:
+        return State.OK, ""
+    levels = _levels(params, "minor_levels", VERSION_DEFAULTS)
+    state = State.OK
+    if levels:
+        warn, crit = levels
+        state = State.CRIT if behind >= crit else State.WARN if behind >= warn else State.OK
+    return state, f"{behind} minor version{'s' if behind != 1 else ''} behind"
 
 
 def parse_netbird_instance_version(string_table: StringTable) -> dict[str, Any] | None:

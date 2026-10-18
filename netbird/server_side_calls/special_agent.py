@@ -22,7 +22,6 @@ class Params(BaseModel):
     timeout: int = 30
     proxy: URLProxy | NoProxy | EnvProxy | None = None
     include_users: bool = False
-    reference: tuple[str, str | None] = ("github_fallback", None)
 
 
 def _agent_arguments(
@@ -44,11 +43,6 @@ def _agent_arguments(
         args.append("--no-proxy")
     if params.include_users:
         args.append("--include-users")
-
-    source, value = params.reference
-    args += ["--reference-source", source]
-    if source == "configured" and value:
-        args += ["--reference-version", value]
 
     yield SpecialAgentCommand(command_arguments=args)
 

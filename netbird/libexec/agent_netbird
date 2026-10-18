@@ -8,7 +8,6 @@ Checkmk agent sections (one JSON object per line):
     netbird_api                 connectivity / partial failures / own token
     netbird_tokens              one line per personal access token
     netbird_networks            one line per network incl. resolved routing peers
-    netbird_reference_version   reference NetBird version for the peer version check
     netbird_instance_version    management/dashboard version of the instance
 
 The API token is never printed. All error texts pass through redact().
@@ -33,7 +32,6 @@ except ImportError:  # running outside a site, e.g. in the unit tests
     parser_add_secret_option = None  # type: ignore[assignment]
     resolve_secret_option = None  # type: ignore[assignment]
 
-GITHUB_LATEST_URL = "https://api.github.com/repos/netbirdio/netbird/releases/latest"
 MAX_WORKERS = 4
 RETRY_AFTER_DEFAULT = 2.0
 RETRY_AFTER_MAX = 10.0
@@ -155,15 +153,11 @@ class Client:
     def get_json(self, path: str) -> Any:
         return self._request(f"{self.base_url}{path}", {"Authorization": f"Token {self._token}"})
 
-    def get_public_json(self, url: str, timeout: float | None = None) -> Any:
-        """Unauthenticated GET - the NetBird token is never sent to third parties."""
-        return self._request(url, {"User-Agent": "cmk-netbird"}, timeout=timeout)
-
-    def _request(self, url: str, headers: dict[str, str], timeout: float | None = None) -> Any:
+    def _request(self, url: str, headers: dict[str, str]) -> Any:
         headers = {"Accept": "application/json", **headers}
         for attempt in (1, 2):
             try:
-                return self._once(url, headers, timeout or self.timeout)
+                return self._once(url, headers, self.timeout)
             except ApiError as exc:
                 if exc.kind == "rate_limit" and attempt == 1:
                     self._sleep(getattr(exc, "retry_after", RETRY_AFTER_DEFAULT))
@@ -274,15 +268,11 @@ def collect_tokens(
 
 
 def peer_info(peer: dict[str, Any]) -> dict[str, Any]:
-    version = peer.get("version")
-    parsed = parse_version(version)
     return {
         "id": peer.get("id"),
         "name": peer.get("name") or peer.get("dns_label") or str(peer.get("id")),
         "connected": bool(peer.get("connected")),
         "last_seen_ts": parse_timestamp(peer.get("last_seen")),
-        "version": version if isinstance(version, str) else None,
-        "version_t": list(parsed) if parsed else None,
         "login_expired": bool(peer.get("login_expired")),
     }
 
@@ -310,8 +300,7 @@ def resolve_router_peers(
             result.append(
                 {
                     "id": peer_id, "name": f"unknown peer {peer_id}", "connected": False,
-                    "last_seen_ts": None, "version": None, "version_t": None,
-                    "login_expired": False,
+                    "last_seen_ts": None, "login_expired": False,
                 }
             )
         else:
@@ -362,36 +351,6 @@ def collect_networks(
             }
         )
     return lines, partial
-
-
-def collect_reference_version(
-    client: Client, source: str, configured: str | None, peers: list[dict[str, Any]]
-) -> dict[str, Any]:
-    peer_versions = [v for v in (parse_version(p.get("version")) for p in peers) if v]
-    result: dict[str, Any] = {
-        "requested": source,
-        "source": source,
-        "version": None,
-        "peers_max": list(max(peer_versions)) if peer_versions else None,
-        "error": None,
-    }
-    if source == "configured":
-        parsed = parse_version(configured)
-        result["version"] = list(parsed) if parsed else None
-        if parsed is None:
-            result["error"] = f"configured version {configured!r} is not a valid version"
-    elif source in ("github", "github_fallback"):
-        result["source"] = "github"
-        try:
-            release = client.get_public_json(GITHUB_LATEST_URL, timeout=min(client.timeout, 15))
-            parsed = parse_version(release.get("tag_name") if isinstance(release, dict) else None)
-            if parsed is None:
-                raise ApiError("invalid_json", "GitHub release has no parsable tag_name")
-            result["version"] = list(parsed)
-        except ApiError as exc:
-            result["error"] = f"GitHub lookup failed: {exc.message}"
-    # source == "peers": nothing to fetch, the check uses peers_max
-    return result
 
 
 def collect_instance_version(client: Client) -> dict[str, Any]:
@@ -463,7 +422,6 @@ def run(args: argparse.Namespace, client: Client, now: float | None = None) -> l
         peers = _as_list(client.get_json("/api/peers"), "peers")
         networks, net_partial = collect_networks(client, peers)
         partial += net_partial
-        reference = collect_reference_version(client, args.reference_source, args.reference_version, peers)
     except ApiError as exc:
         emit("netbird_api", [{"ok": False, "error": exc.message, "error_kind": exc.kind,
                               "partial": [], "own_token": None, "fetched_at": now}])
@@ -477,7 +435,6 @@ def run(args: argparse.Namespace, client: Client, now: float | None = None) -> l
     }])
     emit("netbird_tokens", tokens + token_errors)
     emit("netbird_networks", networks)
-    emit("netbird_reference_version", [reference])
     emit("netbird_instance_version", [collect_instance_version(client)])
     return out
 
@@ -509,11 +466,6 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--proxy", default=None, help="Proxy URL")
     parser.add_argument("--no-proxy", action="store_true", help="Connect directly, ignore environment proxies")
     parser.add_argument("--include-users", action="store_true", help="Also read tokens of regular users")
-    parser.add_argument(
-        "--reference-source", choices=["github_fallback", "github", "configured", "peers"],
-        default="github_fallback",
-    )
-    parser.add_argument("--reference-version", default=None)
     args = parser.parse_args(argv)
 
     try:

@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.3.0] — unreleased
+
+- Removed the version check of routing peers, including the GitHub release lookup and the reference-version option. The agent no longer needs internet access; the management server version is covered by **NetBird Management Version**. The rule "NetBird network" is gone, as it only held version levels.
+
 ## [0.2.0] — unreleased
 
 - Token default levels: WARN at 14 days (was 30), CRIT at 7 days; same for the agent's own token

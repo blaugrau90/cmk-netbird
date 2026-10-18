@@ -116,7 +116,7 @@ def make_client(routes, sleeps=None):
 
 
 def args(**overrides):
-    base = dict(include_users=False, reference_source="peers", reference_version=None)
+    base = dict(include_users=False)
     base.update(overrides)
     return argparse.Namespace(**base)
 
@@ -157,8 +157,7 @@ def test_full_run_emits_all_sections():
     client, opener = make_client(good_routes())
     out = sections(agent.run(args(), client, now=NOW))
 
-    assert set(out) == {"netbird_api", "netbird_tokens", "netbird_networks", "netbird_reference_version",
-                       "netbird_instance_version"}
+    assert set(out) == {"netbird_api", "netbird_tokens", "netbird_networks", "netbird_instance_version"}
     assert out["netbird_api"][0]["ok"] is True
     assert out["netbird_api"][0]["counts"]["tokens"] == 3
     paths = [r.full_url for r in opener.requests]
@@ -197,14 +196,6 @@ def test_group_router_resolved_and_deduplicated():
     assert disabled["enabled"] is False
 
 
-def test_peer_with_unparsable_version():
-    client, _ = make_client(good_routes())
-    networks = {n["name"]: n for n in sections(agent.run(args(), client, now=NOW))["netbird_networks"]}
-    peer = networks["Lab"]["routers"][0]["peers"][0]
-    assert peer["version"] == "development"
-    assert peer["version_t"] is None
-
-
 def test_unknown_peer_in_router_is_offline_not_crash():
     routes = good_routes()
     routes["/api/networks/routers"] = [
@@ -239,62 +230,6 @@ def test_own_token_lookup_failure_is_ignored():
     routes["/api/users/current"] = http_error(404)
     client, _ = make_client(routes)
     assert sections(agent.run(args(), client, now=NOW))["netbird_api"][0]["own_token"] is None
-
-
-# ------------------------------------------------------------ reference version
-def test_reference_peers_source_uses_highest_peer_version():
-    client, _ = make_client(good_routes())
-    ref = sections(agent.run(args(), client, now=NOW))["netbird_reference_version"][0]
-    assert ref["peers_max"] == [0, 61, 0]
-    assert ref["version"] is None
-
-
-def test_reference_configured():
-    client, _ = make_client(good_routes())
-    ref = sections(agent.run(args(reference_source="configured", reference_version="0.59.1"), client, now=NOW))[
-        "netbird_reference_version"
-    ][0]
-    assert ref["version"] == [0, 59, 1]
-    assert ref["error"] is None
-
-
-def test_reference_configured_invalid():
-    client, _ = make_client(good_routes())
-    ref = sections(agent.run(args(reference_source="configured", reference_version="nope"), client, now=NOW))[
-        "netbird_reference_version"
-    ][0]
-    assert ref["version"] is None and ref["error"]
-
-
-def test_reference_github_success_and_no_token_sent_to_github():
-    class Opener(FakeOpener):
-        def open(self, req, timeout=None):
-            self.requests.append(req)
-            if "api.github.com" in req.full_url:
-                return FakeResponse({"tag_name": "v0.62.1"})
-            return super().open(req, timeout)
-
-    opener = Opener(good_routes())
-    client = agent.Client("https://nb.example", SECRET, 5, opener, sleep=lambda s: None)
-    ref = sections(agent.run(args(reference_source="github_fallback"), client, now=NOW))["netbird_reference_version"][0]
-    assert ref["version"] == [0, 62, 1] and ref["source"] == "github"
-    gh = [r for r in opener.requests if "api.github.com" in r.full_url]
-    assert gh and "Authorization" not in {k.title() for k in gh[0].headers}
-    assert SECRET not in json.dumps([dict(r.header_items()) for r in gh])
-
-
-def test_reference_github_failure_reports_error_and_keeps_peers_max():
-    class Opener(FakeOpener):
-        def open(self, req, timeout=None):
-            if "api.github.com" in req.full_url:
-                raise http_error(403, b"rate limit")
-            return super().open(req, timeout)
-
-    client = agent.Client("https://nb.example", SECRET, 5, Opener(good_routes()), sleep=lambda s: None)
-    ref = sections(agent.run(args(reference_source="github_fallback"), client, now=NOW))["netbird_reference_version"][0]
-    assert ref["version"] is None
-    assert "GitHub lookup failed" in ref["error"]
-    assert ref["peers_max"] == [0, 61, 0]
 
 
 # -------------------------------------------------------------------- errors
@@ -426,7 +361,7 @@ def server():
 def run_cli(url, token=SECRET, *extra):
     return subprocess.run(
         [sys.executable, "-I", str(REPO_ROOT / "netbird/libexec/agent_netbird"),
-         "--base-url", url, "--token", token, "--no-proxy", "--reference-source", "peers", *extra],
+         "--base-url", url, "--token", token, "--no-proxy", *extra],
         capture_output=True, text=True, timeout=60,
     )
 
@@ -436,8 +371,7 @@ def test_cli_end_to_end(server):
     assert proc.returncode == 0, proc.stderr
     assert SECRET not in proc.stdout and SECRET not in proc.stderr
     out = sections(proc.stdout.splitlines())
-    assert set(out) == {"netbird_api", "netbird_tokens", "netbird_networks", "netbird_reference_version",
-                       "netbird_instance_version"}
+    assert set(out) == {"netbird_api", "netbird_tokens", "netbird_networks", "netbird_instance_version"}
 
 
 def test_cli_wrong_token_reports_auth_error_without_leaking(server):
@@ -507,3 +441,12 @@ def test_instance_version_failure_does_not_break_the_run(error):
     assert out["netbird_api"][0]["ok"] is True and out["netbird_api"][0]["partial"] == []
     assert out["netbird_instance_version"][0]["ok"] is False
     assert out["netbird_tokens"] and out["netbird_networks"]
+
+
+def test_no_github_access_and_no_peer_versions():
+    client, opener = make_client(good_routes())
+    out = sections(agent.run(args(), client, now=NOW))
+    assert "netbird_reference_version" not in out
+    assert not any("github" in r.full_url for r in opener.requests)
+    peer = out["netbird_networks"][0]["routers"][0]["peers"][0]
+    assert "version" not in peer and "version_t" not in peer

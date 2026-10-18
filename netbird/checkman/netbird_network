@@ -19,15 +19,8 @@ description:
  The text lists the offline peers with the age of their last_seen value and
  points out peers with an expired login as a likely cause.
 
- The version of the routing peers is compared with a reference version. NetBird is
- at 0.x, so the minor version counts: the same minor with another patch level is {OK},
- one minor version behind is {WARN} (default), three or more behind is {CRIT}
- (default), a lower major version is {CRIT} (default). Peers with a newer version
- than the reference are {OK}. Versions that cannot be parsed (empty,
- "development") never cause an alert; the text names such peers. The reference
- version can be the latest GitHub release, a fixed version or the highest peer
- version; the text shows which one is used. The state of the service is the
- maximum of availability and version state.
+ The version of the peers is not checked here; the management server version is
+ covered by the check {NetBird Management Version}.
 
  Metrics: number of routing peers online and in total.
 
