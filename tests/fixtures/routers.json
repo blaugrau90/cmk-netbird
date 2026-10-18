@@ -1,0 +1,6 @@
+[
+  {"id": "r1", "peer": "p1", "peer_groups": null, "metric": 100, "masquerade": true, "enabled": true},
+  {"id": "r2", "peer": null, "peer_groups": ["g-routers"], "metric": 200, "masquerade": true, "enabled": true},
+  {"id": "r3", "peer": "p3", "peer_groups": null, "metric": 100, "masquerade": true, "enabled": true},
+  {"id": "r4", "peer": "p1", "peer_groups": null, "metric": 100, "masquerade": true, "enabled": false}
+]

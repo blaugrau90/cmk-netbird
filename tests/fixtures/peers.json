@@ -1,0 +1,14 @@
+[
+  {"id": "p1", "name": "router-a", "dns_label": "router-a", "connected": true,
+   "last_seen": "2026-10-18T10:00:00.1234567Z", "version": "0.60.2", "os": "Linux",
+   "groups": [{"id": "g-routers", "name": "routers"}], "login_expired": false, "ephemeral": false},
+  {"id": "p2", "name": "router-b", "dns_label": "router-b", "connected": false,
+   "last_seen": "2026-10-18T07:00:00Z", "version": "0.57.0", "os": "Linux",
+   "groups": [{"id": "g-routers", "name": "routers"}], "login_expired": true, "ephemeral": false},
+  {"id": "p3", "name": "single-router", "dns_label": "single-router", "connected": true,
+   "last_seen": "2026-10-18T10:00:00Z", "version": "development", "os": "Linux",
+   "groups": [], "login_expired": false, "ephemeral": false},
+  {"id": "p4", "name": "laptop", "dns_label": "laptop", "connected": true,
+   "last_seen": "2026-10-18T10:00:00Z", "version": "0.61.0-rc1", "os": "Darwin",
+   "groups": [], "login_expired": false, "ephemeral": false}
+]

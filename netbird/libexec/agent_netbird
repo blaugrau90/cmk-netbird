@@ -1,0 +1,511 @@
+#!/usr/bin/env python3
+"""NetBird special agent for Checkmk.
+
+Read-only: queries the NetBird REST API for API tokens (personal access
+tokens) and for the routing peers of every network, and emits the result as
+Checkmk agent sections (one JSON object per line):
+
+    netbird_api                 connectivity / partial failures / own token
+    netbird_tokens              one line per personal access token
+    netbird_networks            one line per network incl. resolved routing peers
+    netbird_reference_version   reference NetBird version for the version check
+
+The API token is never printed. All error texts pass through redact().
+"""
+
+import argparse
+import json
+import re
+import socket
+import ssl
+import sys
+import time
+import urllib.error
+import urllib.request
+from concurrent.futures import ThreadPoolExecutor
+from datetime import UTC, datetime, timedelta, timezone
+from typing import Any
+
+try:  # available inside a Checkmk 2.5 site (work-in-progress API, see README)
+    from cmk.password_store.v1_unstable import parser_add_secret_option, resolve_secret_option
+except ImportError:  # running outside a site, e.g. in the unit tests
+    parser_add_secret_option = None  # type: ignore[assignment]
+    resolve_secret_option = None  # type: ignore[assignment]
+
+GITHUB_LATEST_URL = "https://api.github.com/repos/netbirdio/netbird/releases/latest"
+MAX_WORKERS = 4
+RETRY_AFTER_DEFAULT = 2.0
+RETRY_AFTER_MAX = 10.0
+MAX_ERROR_TEXT = 200
+
+_TS_RE = re.compile(
+    r"^(\d{4})-(\d{2})-(\d{2})[Tt ](\d{2}):(\d{2}):(\d{2})(?:\.(\d+))?"
+    r"(Z|z|[+-]\d{2}:?\d{2})?$"
+)
+_VERSION_RE = re.compile(r"^[vV]?(\d+)\.(\d+)(?:\.(\d+))?(.*)$")
+
+
+# --------------------------------------------------------------------------
+# Parsing helpers
+# --------------------------------------------------------------------------
+
+
+def parse_timestamp(value: Any) -> float | None:
+    """Parse an API timestamp to epoch seconds.
+
+    NetBird emits up to 7 fractional digits (``2023-05-04T12:45:25.9723616Z``),
+    which datetime.fromisoformat() rejects on older Python versions, so the
+    fraction is truncated to 6 digits by hand. Missing values, null and the
+    Go zero time (``0001-01-01T00:00:00Z``) mean "never" and return None.
+    """
+    if not isinstance(value, str) or not value.strip():
+        return None
+    match = _TS_RE.match(value.strip())
+    if match is None:
+        return None
+    year, month, day, hour, minute, second, frac, tz = match.groups()
+    if int(year) <= 1:
+        return None
+    microsecond = int((frac or "0")[:6].ljust(6, "0"))
+    if tz in (None, "Z", "z"):
+        tzinfo = UTC
+    else:
+        sign = -1 if tz[0] == "-" else 1
+        digits = tz[1:].replace(":", "")
+        offset = sign * (int(digits[:2]) * 3600 + int(digits[2:]) * 60)
+        tzinfo = timezone(timedelta(seconds=offset))
+    try:
+        parsed = datetime(
+            int(year), int(month), int(day), int(hour), int(minute), int(second),
+            microsecond, tzinfo=tzinfo,
+        )
+    except ValueError:
+        return None
+    return parsed.timestamp()
+
+
+def parse_version(value: Any) -> tuple[int, int, int] | None:
+    """Parse ``0.60.2`` / ``v0.60.2`` / ``0.60.2-rc1`` to (major, minor, patch).
+
+    Returns None for anything unparsable (empty, ``development``, ...). A
+    pre-release suffix is ignored for the comparison.
+    """
+    if not isinstance(value, str):
+        return None
+    match = _VERSION_RE.match(value.strip())
+    if match is None:
+        return None
+    major, minor, patch, rest = match.groups()
+    if rest and rest[0] not in "-+ ":
+        return None  # e.g. "0.60.2abc" is not a version we understand
+    return int(major), int(minor), int(patch or 0)
+
+
+# --------------------------------------------------------------------------
+# HTTP layer
+# --------------------------------------------------------------------------
+
+
+class ApiError(Exception):
+    """Failure talking to an API. ``kind`` drives the Checkmk-side wording."""
+
+    def __init__(self, kind: str, message: str, status: int | None = None):
+        super().__init__(message)
+        self.kind = kind
+        self.message = message
+        self.status = status
+
+
+def redact(text: str, token: str | None) -> str:
+    if token:
+        text = text.replace(token, "<redacted>")
+    return text
+
+
+def build_opener(verify_ssl: bool, proxy: str | None, no_proxy: bool) -> urllib.request.OpenerDirector:
+    handlers: list[urllib.request.BaseHandler] = []
+    if no_proxy:
+        handlers.append(urllib.request.ProxyHandler({}))
+    elif proxy:
+        handlers.append(urllib.request.ProxyHandler({"http": proxy, "https": proxy}))
+    if not verify_ssl:
+        context = ssl.create_default_context()
+        context.check_hostname = False
+        context.verify_mode = ssl.CERT_NONE
+        handlers.append(urllib.request.HTTPSHandler(context=context))
+    return urllib.request.build_opener(*handlers)
+
+
+class Client:
+    def __init__(
+        self,
+        base_url: str,
+        token: str,
+        timeout: float,
+        opener: urllib.request.OpenerDirector,
+        sleep: Any = time.sleep,
+    ) -> None:
+        self.base_url = base_url.rstrip("/")
+        self._token = token
+        self.timeout = timeout
+        self._opener = opener
+        self._sleep = sleep
+
+    def get_json(self, path: str) -> Any:
+        return self._request(f"{self.base_url}{path}", {"Authorization": f"Token {self._token}"})
+
+    def get_public_json(self, url: str, timeout: float | None = None) -> Any:
+        """Unauthenticated GET - the NetBird token is never sent to third parties."""
+        return self._request(url, {"User-Agent": "cmk-netbird"}, timeout=timeout)
+
+    def _request(self, url: str, headers: dict[str, str], timeout: float | None = None) -> Any:
+        headers = {"Accept": "application/json", **headers}
+        for attempt in (1, 2):
+            try:
+                return self._once(url, headers, timeout or self.timeout)
+            except ApiError as exc:
+                if exc.kind == "rate_limit" and attempt == 1:
+                    self._sleep(getattr(exc, "retry_after", RETRY_AFTER_DEFAULT))
+                    continue
+                raise
+        raise AssertionError("unreachable")
+
+    def _once(self, url: str, headers: dict[str, str], timeout: float) -> Any:
+        req = urllib.request.Request(url, headers=headers, method="GET")
+        try:
+            with self._opener.open(req, timeout=timeout) as resp:
+                raw = resp.read().decode("utf-8", errors="replace")
+        except urllib.error.HTTPError as exc:
+            raise self._http_error(exc) from None
+        except TimeoutError:
+            raise ApiError("timeout", f"timeout after {timeout:g}s") from None
+        except urllib.error.URLError as exc:
+            reason = exc.reason
+            if isinstance(reason, (socket.timeout, TimeoutError)):
+                raise ApiError("timeout", f"timeout after {timeout:g}s") from None
+            raise ApiError("connection", self._clean(f"connection failed: {reason}")) from None
+        except (OSError, ValueError) as exc:  # ssl errors, bad URLs, ...
+            raise ApiError("connection", self._clean(f"connection failed: {exc}")) from None
+
+        try:
+            return json.loads(raw)
+        except json.JSONDecodeError:
+            raise ApiError("invalid_json", "response is not valid JSON") from None
+
+    def _http_error(self, exc: urllib.error.HTTPError) -> ApiError:
+        code = exc.code
+        try:
+            body = exc.read().decode("utf-8", errors="replace")
+        except Exception:
+            body = ""
+        detail = self._clean(body.strip().replace("\n", " "))[:MAX_ERROR_TEXT]
+        suffix = f": {detail}" if detail else ""
+        if code in (401, 403):
+            return ApiError("auth", f"HTTP {code}{suffix}", code)
+        if code == 429:
+            error = ApiError("rate_limit", f"HTTP 429 (rate limited){suffix}", code)
+            try:
+                retry_after = float(exc.headers.get("Retry-After", ""))
+            except (TypeError, ValueError):
+                retry_after = RETRY_AFTER_DEFAULT
+            error.retry_after = min(max(retry_after, 0.0), RETRY_AFTER_MAX)  # type: ignore[attr-defined]
+            return error
+        if code >= 500:
+            return ApiError("server", f"HTTP {code}{suffix}", code)
+        return ApiError("http", f"HTTP {code}{suffix}", code)
+
+    def _clean(self, text: str) -> str:
+        return redact(text, self._token)
+
+
+# --------------------------------------------------------------------------
+# Data collection
+# --------------------------------------------------------------------------
+
+
+def _as_list(data: Any, what: str) -> list[dict[str, Any]]:
+    if not isinstance(data, list):
+        raise ApiError("invalid_json", f"unexpected response for {what} (expected a list)")
+    return [item for item in data if isinstance(item, dict)]
+
+
+def collect_tokens(
+    client: Client, users: list[dict[str, Any]]
+) -> tuple[list[dict[str, Any]], list[str], list[dict[str, Any]]]:
+    """Fetch tokens per user (N+1). Returns (token lines, partial messages, error lines)."""
+
+    def fetch(user: dict[str, Any]) -> tuple[dict[str, Any], list[dict[str, Any]] | ApiError]:
+        try:
+            return user, _as_list(client.get_json(f"/api/users/{user['id']}/tokens"), "tokens")
+        except ApiError as exc:
+            return user, exc
+
+    candidates = [u for u in users if u.get("id")]
+    with ThreadPoolExecutor(max_workers=MAX_WORKERS) as pool:
+        results = list(pool.map(fetch, candidates))
+
+    lines: list[dict[str, Any]] = []
+    partial: list[str] = []
+    errors: list[dict[str, Any]] = []
+    for user, result in results:
+        user_name = user.get("name") or user.get("email") or str(user["id"])
+        base = {
+            "user_id": user["id"],
+            "user_name": user_name,
+            "is_service_user": bool(user.get("is_service_user")),
+        }
+        if isinstance(result, ApiError):
+            partial.append(f"tokens of {user_name}: {result.message}")
+            errors.append({**base, "read_error": result.message})
+            continue
+        for token in result:
+            lines.append(
+                {
+                    **base,
+                    "token_id": token.get("id"),
+                    "name": token.get("name") or str(token.get("id")),
+                    "expiration_ts": parse_timestamp(token.get("expiration_date")),
+                    "created_ts": parse_timestamp(token.get("created_at")),
+                    "last_used_ts": parse_timestamp(token.get("last_used")),
+                }
+            )
+    return lines, partial, errors
+
+
+def peer_info(peer: dict[str, Any]) -> dict[str, Any]:
+    version = peer.get("version")
+    parsed = parse_version(version)
+    return {
+        "id": peer.get("id"),
+        "name": peer.get("name") or peer.get("dns_label") or str(peer.get("id")),
+        "connected": bool(peer.get("connected")),
+        "last_seen_ts": parse_timestamp(peer.get("last_seen")),
+        "version": version if isinstance(version, str) else None,
+        "version_t": list(parsed) if parsed else None,
+        "login_expired": bool(peer.get("login_expired")),
+    }
+
+
+def resolve_router_peers(
+    router: dict[str, Any],
+    peers_by_id: dict[str, dict[str, Any]],
+    peers_by_group: dict[str, list[str]],
+) -> list[dict[str, Any]]:
+    """Resolve a router (single peer or peer groups) to distinct peer infos."""
+    peer_ids: list[str] = []
+    if router.get("peer"):
+        peer_ids.append(router["peer"])
+    for group_id in router.get("peer_groups") or []:
+        peer_ids.extend(peers_by_group.get(group_id, []))
+    result: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for peer_id in peer_ids:
+        if peer_id in seen:
+            continue
+        seen.add(peer_id)
+        peer = peers_by_id.get(peer_id)
+        if peer is None:
+            # Router references a peer the API no longer lists - treat as offline.
+            result.append(
+                {
+                    "id": peer_id, "name": f"unknown peer {peer_id}", "connected": False,
+                    "last_seen_ts": None, "version": None, "version_t": None,
+                    "login_expired": False,
+                }
+            )
+        else:
+            result.append(peer_info(peer))
+    return result
+
+
+def collect_networks(
+    client: Client, peers: list[dict[str, Any]]
+) -> tuple[list[dict[str, Any]], list[str]]:
+    partial: list[str] = []
+    networks = _as_list(client.get_json("/api/networks"), "networks")
+    routers = _as_list(client.get_json("/api/networks/routers"), "network routers")
+    routers_by_id = {r["id"]: r for r in routers if r.get("id")}
+
+    peers_by_id = {p["id"]: p for p in peers if p.get("id")}
+    peers_by_group: dict[str, list[str]] = {}
+    for peer in peers:
+        for group in peer.get("groups") or []:
+            if isinstance(group, dict) and group.get("id") and peer.get("id"):
+                peers_by_group.setdefault(group["id"], []).append(peer["id"])
+
+    lines: list[dict[str, Any]] = []
+    for network in networks:
+        router_ids = [r for r in (network.get("routers") or []) if isinstance(r, str)]
+        network_routers = [routers_by_id[r] for r in router_ids if r in routers_by_id]
+        if not network_routers and (network.get("routing_peers_count") or 0) > 0:
+            # The id list in /api/networks was empty or stale: ask per network.
+            try:
+                network_routers = _as_list(
+                    client.get_json(f"/api/networks/{network['id']}/routers"), "network routers"
+                )
+            except ApiError as exc:
+                partial.append(f"routers of network {network.get('name')}: {exc.message}")
+        lines.append(
+            {
+                "id": network.get("id"),
+                "name": network.get("name") or str(network.get("id")),
+                "routers": [
+                    {
+                        "id": router.get("id"),
+                        "enabled": bool(router.get("enabled", True)),
+                        "metric": router.get("metric"),
+                        "peers": resolve_router_peers(router, peers_by_id, peers_by_group),
+                    }
+                    for router in network_routers
+                ],
+            }
+        )
+    return lines, partial
+
+
+def collect_reference_version(
+    client: Client, source: str, configured: str | None, peers: list[dict[str, Any]]
+) -> dict[str, Any]:
+    peer_versions = [v for v in (parse_version(p.get("version")) for p in peers) if v]
+    result: dict[str, Any] = {
+        "requested": source,
+        "source": source,
+        "version": None,
+        "peers_max": list(max(peer_versions)) if peer_versions else None,
+        "error": None,
+    }
+    if source == "configured":
+        parsed = parse_version(configured)
+        result["version"] = list(parsed) if parsed else None
+        if parsed is None:
+            result["error"] = f"configured version {configured!r} is not a valid version"
+    elif source in ("github", "github_fallback"):
+        result["source"] = "github"
+        try:
+            release = client.get_public_json(GITHUB_LATEST_URL, timeout=min(client.timeout, 15))
+            parsed = parse_version(release.get("tag_name") if isinstance(release, dict) else None)
+            if parsed is None:
+                raise ApiError("invalid_json", "GitHub release has no parsable tag_name")
+            result["version"] = list(parsed)
+        except ApiError as exc:
+            result["error"] = f"GitHub lookup failed: {exc.message}"
+    # source == "peers": nothing to fetch, the check uses peers_max
+    return result
+
+
+def collect_own_token(client: Client, tokens: list[dict[str, Any]], now: float) -> dict[str, Any] | None:
+    """Best-effort: find the token this agent authenticates with.
+
+    The API does not tell which token a request used. The authenticating user is
+    known (GET /api/users/current), and the token with the most recent
+    ``last_used`` among its unexpired tokens is by far the likeliest candidate.
+    """
+    try:
+        current = client.get_json("/api/users/current")
+    except ApiError:
+        return None
+    if not isinstance(current, dict) or not current.get("id"):
+        return None
+    mine = [
+        t for t in tokens
+        if t["user_id"] == current["id"] and (t["expiration_ts"] is None or t["expiration_ts"] > now)
+    ]
+    if not mine:
+        return None
+    mine.sort(key=lambda t: t["last_used_ts"] or 0, reverse=True)
+    best = mine[0]
+    return {
+        "user_name": best["user_name"],
+        "name": best["name"],
+        "expiration_ts": best["expiration_ts"],
+        "certain": len(mine) == 1,
+    }
+
+
+def run(args: argparse.Namespace, client: Client, now: float | None = None) -> list[str]:
+    """Collect everything and return the output lines (never raises ApiError)."""
+    now = time.time() if now is None else now
+    out: list[str] = []
+
+    def emit(section: str, rows: list[dict[str, Any]]) -> None:
+        out.append(f"<<<{section}:sep(0)>>>")
+        out.extend(json.dumps(row, ensure_ascii=False, sort_keys=True) for row in rows)
+
+    try:
+        users_path = "/api/users" if args.include_users else "/api/users?service_user=true"
+        users = _as_list(client.get_json(users_path), "users")
+        tokens, partial, token_errors = collect_tokens(client, users)
+        peers = _as_list(client.get_json("/api/peers"), "peers")
+        networks, net_partial = collect_networks(client, peers)
+        partial += net_partial
+        reference = collect_reference_version(client, args.reference_source, args.reference_version, peers)
+    except ApiError as exc:
+        emit("netbird_api", [{"ok": False, "error": exc.message, "error_kind": exc.kind,
+                              "partial": [], "own_token": None, "fetched_at": now}])
+        return out
+
+    emit("netbird_api", [{
+        "ok": True, "error": None, "error_kind": None, "partial": partial,
+        "own_token": collect_own_token(client, tokens, now), "fetched_at": now,
+        "counts": {"users": len(users), "tokens": len(tokens), "peers": len(peers),
+                   "networks": len(networks)},
+    }])
+    emit("netbird_tokens", tokens + token_errors)
+    emit("netbird_networks", networks)
+    emit("netbird_reference_version", [reference])
+    return out
+
+
+def get_token(args: argparse.Namespace) -> str:
+    """The API token: from the Checkmk password store (--token-id) or --token."""
+    if getattr(args, "token_id", None):
+        if resolve_secret_option is None:
+            raise SystemExit("ERROR: --token-id needs the Checkmk password store API (run inside a site)")
+        return str(resolve_secret_option(args, "token").reveal())
+    token = args.token
+    return str(token.reveal() if hasattr(token, "reveal") else token)
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description="NetBird special agent for Checkmk")
+    parser.add_argument("--base-url", default="https://api.netbird.io")
+    if parser_add_secret_option is not None:
+        parser_add_secret_option(
+            parser, long="--token", required=True,
+            help="NetBird personal access token (debugging only, shows up on the command line)",
+        )
+    else:
+        group = parser.add_mutually_exclusive_group(required=True)
+        group.add_argument("--token", help="NetBird personal access token")
+        group.add_argument("--token-id", help="Password store reference (needs a Checkmk site)")
+    parser.add_argument("--timeout", type=float, default=30.0)
+    parser.add_argument("--no-verify-ssl", action="store_true")
+    parser.add_argument("--proxy", default=None, help="Proxy URL")
+    parser.add_argument("--no-proxy", action="store_true", help="Connect directly, ignore environment proxies")
+    parser.add_argument("--include-users", action="store_true", help="Also read tokens of regular users")
+    parser.add_argument(
+        "--reference-source", choices=["github_fallback", "github", "configured", "peers"],
+        default="github_fallback",
+    )
+    parser.add_argument("--reference-version", default=None)
+    args = parser.parse_args(argv)
+
+    try:
+        token = get_token(args)
+    except Exception as exc:
+        print(f"ERROR: cannot read API token: {type(exc).__name__}: {exc}", file=sys.stderr)
+        return 1
+
+    opener = build_opener(not args.no_verify_ssl, args.proxy, args.no_proxy)
+    client = Client(args.base_url, token, args.timeout, opener)
+    try:
+        lines = run(args, client)
+    except Exception as exc:
+        print(f"ERROR: {redact(type(exc).__name__ + ': ' + str(exc), token)}", file=sys.stderr)
+        return 1
+    print("\n".join(lines))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

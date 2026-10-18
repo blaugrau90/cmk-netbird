@@ -1,0 +1,8 @@
+[
+  {"id": "n1", "name": "Office", "description": "", "routers": ["r1", "r2"], "routing_peers_count": 2,
+   "resources": [], "policies": []},
+  {"id": "n2", "name": "Lab", "description": "", "routers": ["r3"], "routing_peers_count": 1,
+   "resources": [], "policies": []},
+  {"id": "n3", "name": "Disabled", "description": "", "routers": ["r4"], "routing_peers_count": 0,
+   "resources": [], "policies": []}
+]

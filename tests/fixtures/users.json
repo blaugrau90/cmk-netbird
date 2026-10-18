@@ -1,0 +1,8 @@
+[
+  {"id": "svc1", "name": "checkmk-monitoring", "email": "", "role": "admin", "status": "active",
+   "is_service_user": true, "is_blocked": false},
+  {"id": "svc2", "name": "terraform", "email": "", "role": "user", "status": "active",
+   "is_service_user": true, "is_blocked": false},
+  {"id": "usr1", "name": "Alice Example", "email": "alice@example.com", "role": "owner",
+   "status": "active", "is_service_user": false, "is_blocked": false}
+]
