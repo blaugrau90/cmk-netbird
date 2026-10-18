@@ -54,11 +54,11 @@ NetBird Cloud allows 120 requests per minute; the agent needs roughly *number of
 
 ## Installation
 
-1. Download `netbird-0.4.0.mkp` (or build it, see below).
+1. Download `netbird-0.1.0.mkp` (or build it, see below).
 2. In Checkmk: **Setup → Extension Packages → Upload package**, or as site user:
 
    ```bash
-   mkp add netbird-0.4.0.mkp
+   mkp add netbird-0.1.0.mkp
    mkp enable netbird
    ```
 
