@@ -2,7 +2,7 @@ title: NetBird: API Connectivity
 agents: netbird
 catalog: cloud/netbird
 license: GPLv3
-distribution: check_mk
+distribution: cmk-netbird (community)
 
 item:
  None. There is one service per NetBird account (Checkmk host).

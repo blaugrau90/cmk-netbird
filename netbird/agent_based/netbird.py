@@ -464,13 +464,14 @@ def check_netbird_network_at(
         if state != State.OK or reason:
             outdated.append(f"{peer.get('name')} {peer.get('version')}: {reason}")
         worst = _worst(worst, state)
+    known = len(peers) - len(unknown)
     if outdated:
         yield Result(
             state=worst,
             summary=f"Outdated: {', '.join(outdated)}",
             details=f"Reference version {ref_text}",
         )
-    else:
+    elif known:
         yield Result(state=State.OK, summary=f"Versions up to date (reference {ref_text})")
     if unknown:
         yield Result(

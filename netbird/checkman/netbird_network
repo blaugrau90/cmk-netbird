@@ -2,7 +2,7 @@ title: NetBird: Network Routing Peers
 agents: netbird
 catalog: cloud/netbird
 license: GPLv3
-distribution: check_mk
+distribution: cmk-netbird (community)
 
 item:
  The name of the NetBird network.

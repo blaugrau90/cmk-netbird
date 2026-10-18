@@ -126,6 +126,8 @@ Checkmk check cycle
   └─ check plugins: netbird_api · netbird_token · netbird_network
 ```
 
+If the tokens of one user cannot be read (e.g. HTTP 403), that user's token services show "Item not found" and **NetBird API** is WARN and names the user.
+
 If the API cannot be queried at all the agent still exits 0 and prints only `netbird_api` with the error, so the failure shows up in the **NetBird API** service. Other services of the host then go stale.
 
 ---

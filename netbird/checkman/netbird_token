@@ -2,7 +2,7 @@ title: NetBird: API Token (Personal Access Token)
 agents: netbird
 catalog: cloud/netbird
 license: GPLv3
-distribution: check_mk
+distribution: cmk-netbird (community)
 
 item:
  {User}/{Token name} for service users, {[user] User}/{Token name} for regular users

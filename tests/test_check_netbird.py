@@ -361,6 +361,7 @@ def test_unparsable_version_is_not_crit_and_is_mentioned(version):
     res = ncheck("N", sec, ref())
     assert overall(res) == State.OK
     assert "Version unknown" in text(res)
+    assert "up to date" not in text(res)  # nothing was actually compared
 
 
 def test_rc_version_is_compared_by_base_version():
