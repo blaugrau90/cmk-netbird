@@ -46,7 +46,7 @@ NetBird has no endpoint that lists all tokens of an account, so the agent lists 
 | `GET /api/networks`, `GET /api/networks/routers` | networks and routers |
 | `GET /api/networks/{id}/routers` | only if a network's router list is empty |
 
-The minimal role is **not yet verified** against a real instance (see "To verify" below). A read-only role that can read users, tokens, peers and networks is what you want; if NetBird only lets *admin*/*owner* read other users' tokens, use that for the service user.
+The service user needs a role that is allowed to read users, tokens, peers and networks.
 
 NetBird Cloud allows 120 requests per minute; the agent needs roughly *number of users + 6* requests per run.
 
@@ -105,22 +105,6 @@ Checkmk check cycle
 If the tokens of one user cannot be read (e.g. HTTP 403), that user's token services show "Item not found" and **NetBird API** is WARN and names the user.
 
 If the API cannot be queried at all the agent still exits 0 and prints only `netbird_api` with the error, so the failure shows up in the **NetBird API** service. Other services of the host then go stale.
-
----
-
-## To verify against a real NetBird instance
-
-This plugin was written from the NetBird API documentation. The following points are **not confirmed** with real data yet, because they need a live account. The plugin handles each of them defensively:
-
-| Question | How the plugin copes |
-|---|---|
-| Are already expired tokens still listed by `/api/users/{id}/tokens`? | If listed they are CRIT ("expired X ago") unless *ignore tokens expired for more than…* is set. If not listed, the service goes UNKNOWN/vanished. |
-| How does `last_used` look for a never-used token (missing, `null`, zero time)? | All three are treated as "never used"; the time since `created_at` counts. |
-| How often is `last_used` updated? | Affects the heuristic that finds the agent's own token and the accuracy of "unused since". |
-| Minimal role of the service user | See above. If tokens of other users cannot be read, the **NetBird API** service is WARN and names the users. |
-| Do router objects carry a network id? | Not needed: the assignment uses `routers` in `GET /api/networks`; the per-network endpoint is the fallback. |
-
-Please report what you find in the GitHub issues.
 
 ---
 
