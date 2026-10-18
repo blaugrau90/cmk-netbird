@@ -35,7 +35,7 @@ def overall(gen):
 
 
 def text(gen):
-    return " | ".join((r.summary or r.notice or "") for r in results(gen))
+    return " | ".join((r.summary or getattr(r, "notice", None) or getattr(r, "details", None) or "") for r in results(gen))
 
 
 # ----------------------------------------------------------------- tokens
@@ -80,7 +80,7 @@ def test_token_ok():
 
 @pytest.mark.parametrize(
     "days, state",
-    [(31, State.OK), (30, State.WARN), (8, State.WARN), (7, State.CRIT), (1, State.CRIT)],
+    [(15, State.OK), (14, State.WARN), (8, State.WARN), (7, State.CRIT), (1, State.CRIT)],
 )
 def test_token_expiry_levels(days, state):
     assert overall(tcheck(expiration_ts=NOW + days * DAY)) == state
@@ -208,7 +208,7 @@ def own(days, certain=True):
 
 def test_api_own_token_expiring_soon():
     assert overall(acheck(api(own_token=own(60)))) == State.OK
-    assert overall(acheck(api(own_token=own(20)))) == State.WARN
+    assert overall(acheck(api(own_token=own(10)))) == State.WARN
     assert overall(acheck(api(own_token=own(3)))) == State.CRIT
     assert overall(acheck(api(own_token=own(-1)))) == State.CRIT
 
@@ -441,3 +441,62 @@ def test_check_function_signatures_match_what_checkmk_expects():
 def test_public_check_functions_run_with_the_current_time():
     sec = section(expiration_ts=2e9, last_used_ts=None, created_ts=None)
     assert results(check.check_netbird_token("svc/agent", {}, sec))
+
+
+# ----------------------------------------------------- management version
+def inst(**kw):
+    base = {"ok": True, "management_current": "0.64.0", "management_current_t": [0, 64, 0],
+            "management_available": "0.64.0", "management_available_t": [0, 64, 0],
+            "dashboard_available": "2.28.0", "update_available": False}
+    base.update(kw)
+    return base
+
+
+def vcheck(section, params=None):
+    return run(check.check_netbird_version(params or {}, section))
+
+
+def test_version_discovery_only_when_endpoint_worked():
+    assert [s for s in check.discover_netbird_version(inst())] != []
+    assert list(check.discover_netbird_version({"ok": False, "error": "HTTP 404"})) == []
+
+
+def test_version_up_to_date():
+    res = vcheck(inst())
+    assert overall(res) == State.OK
+    assert "Up to date" in text(res) and "0.64.0" in text(res)
+
+
+def test_version_patch_update_ok_by_default_and_configurable():
+    sec = inst(management_available="0.64.1", management_available_t=[0, 64, 1], update_available=True)
+    res = vcheck(sec)
+    assert overall(res) == State.OK
+    assert "0.64.1" in text(res) and "patch update" in text(res)
+    assert overall(vcheck(sec, {"update_state": 1})) == State.WARN
+
+
+@pytest.mark.parametrize("available, state", [((0, 65, 0), State.WARN), ((0, 66, 3), State.WARN),
+                                              ((0, 67, 0), State.CRIT), ((1, 0, 0), State.CRIT)])
+def test_version_minor_and_major_distance(available, state):
+    sec = inst(management_available=".".join(map(str, available)), management_available_t=list(available),
+               update_available=True)
+    assert overall(vcheck(sec)) == state
+
+
+def test_version_endpoint_failure_is_unknown_not_crit():
+    res = vcheck({"ok": False, "error": "HTTP 404"})
+    assert overall(res) == State.UNKNOWN
+    assert "HTTP 404" in text(res)
+
+
+def test_version_unparsable_never_alerts():
+    res = vcheck(inst(management_current="development", management_current_t=None))
+    assert overall(res) == State.OK
+    assert "cannot be compared" in text(res)
+
+
+def test_version_signatures():
+    import inspect
+
+    assert list(inspect.signature(check.check_netbird_version).parameters) == ["params", "section"]
+    assert list(inspect.signature(check.discover_netbird_version).parameters) == ["section"]

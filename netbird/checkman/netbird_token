@@ -12,7 +12,7 @@ description:
  This check monitors one NetBird personal access token. Two conditions are
  evaluated and the worse state wins:
 
- {Remaining lifetime}: {WARN} at 30 days, {CRIT} at 7 days by default. A token that
+ {Remaining lifetime}: {WARN} at 14 days, {CRIT} at 7 days by default. A token that
  is already expired is {CRIT}. Optionally an expired token is ignored (service
  {OK}) once it has been expired for longer than a configurable time.
 

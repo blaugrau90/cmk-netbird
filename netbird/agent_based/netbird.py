@@ -5,12 +5,14 @@ Sections (JSON, one object per line), written by agent_netbird:
 - netbird_api: connectivity, partial failures, the agent's own token
 - netbird_tokens: personal access tokens
 - netbird_networks: networks with their resolved routing peers
-- netbird_reference_version: reference NetBird version for the version check
+- netbird_reference_version: reference NetBird version for the peer version check
+- netbird_instance_version: management/dashboard version of the instance
 
 Check plugins:
 - netbird_api:     "NetBird API"
 - netbird_token:   "NetBird Token <User>/<Token>"
 - netbird_network: "NetBird Network <Name>"
+- netbird_version: "NetBird Management Version"
 """
 
 import json
@@ -35,7 +37,7 @@ from cmk.agent_based.v2 import (
 DAY = 86400.0
 
 TOKEN_DEFAULTS: Mapping[str, Any] = {
-    "expiry_levels": ("fixed", (30 * DAY, 7 * DAY)),
+    "expiry_levels": ("fixed", (14 * DAY, 7 * DAY)),
     "unused_warn": 90 * DAY,
     "unused_crit": None,
     "ignore_expired_after": None,
@@ -44,8 +46,13 @@ NETWORK_DEFAULTS: Mapping[str, Any] = {
     "minor_levels": ("fixed", (1, 3)),
     "major_state": 2,
 }
+VERSION_DEFAULTS: Mapping[str, Any] = {
+    "minor_levels": ("fixed", (1, 3)),
+    "major_state": 2,
+    "update_state": 0,
+}
 API_DEFAULTS: Mapping[str, Any] = {
-    "own_token_levels": ("fixed", (30 * DAY, 7 * DAY)),
+    "own_token_levels": ("fixed", (14 * DAY, 7 * DAY)),
 }
 TOKEN_DISCOVERY_DEFAULTS: Mapping[str, Any] = {}
 
@@ -494,4 +501,79 @@ agent_section_netbird_networks = AgentSection(name="netbird_networks", parse_fun
 
 agent_section_netbird_reference_version = AgentSection(
     name="netbird_reference_version", parse_function=parse_netbird_reference_version
+)
+
+
+# --------------------------------------------------------------------------
+# netbird_instance_version
+# --------------------------------------------------------------------------
+
+
+def parse_netbird_instance_version(string_table: StringTable) -> dict[str, Any] | None:
+    rows = _json_rows(string_table)
+    return rows[0] if rows else None
+
+
+def discover_netbird_version(section: dict[str, Any]) -> DiscoveryResult:
+    if section.get("ok"):
+        yield Service()
+
+
+def check_netbird_version(params: Mapping[str, Any], section: dict[str, Any]) -> CheckResult:
+    if not section.get("ok"):
+        yield Result(
+            state=State.UNKNOWN,
+            summary=f"Version information not available: {section.get('error') or 'unknown error'}",
+        )
+        return
+
+    current_raw = section.get("management_current")
+    available_raw = section.get("management_available")
+    current = section.get("management_current_t")
+    available = section.get("management_available_t")
+    dashboard = section.get("dashboard_available")
+
+    if current_raw:
+        yield Result(state=State.OK, summary=f"Management {current_raw}")
+    else:
+        yield Result(state=State.UNKNOWN, summary="Current management version not reported")
+    if dashboard:
+        yield Result(state=State.OK, notice=f"Latest dashboard version: {dashboard}")
+
+    if not (current and available):
+        if available_raw is None and current:
+            yield Result(state=State.OK, summary="Latest version not reported")
+        elif current_raw or available_raw:
+            yield Result(
+                state=State.OK,
+                summary=f"Versions cannot be compared (current {current_raw or 'unknown'}, "
+                f"latest {available_raw or 'unknown'})",
+            )
+        return
+
+    cur = (current[0], current[1], current[2])
+    avail = (available[0], available[1], available[2])
+    state, reason = _version_state(cur, avail, params)
+    if state == State.OK and cur < avail:
+        # patch-level update only
+        state = _state(_p(params, "update_state", VERSION_DEFAULTS), State.OK)
+        reason = "patch update available"
+    if cur < avail:
+        yield Result(state=state, summary=f"Update available: {available_raw} ({reason})")
+    else:
+        yield Result(state=State.OK, summary="Up to date")
+
+
+agent_section_netbird_instance_version = AgentSection(
+    name="netbird_instance_version", parse_function=parse_netbird_instance_version
+)
+
+check_plugin_netbird_version = CheckPlugin(
+    name="netbird_version",
+    sections=["netbird_instance_version"],
+    service_name="NetBird Management Version",
+    discovery_function=discover_netbird_version,
+    check_function=check_netbird_version,
+    check_ruleset_name="netbird_version",
+    check_default_parameters=dict(VERSION_DEFAULTS),
 )

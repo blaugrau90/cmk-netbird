@@ -23,7 +23,7 @@ description:
  The API does not tell which token a request used. The agent therefore
  assumes that the token it authenticates with is the most recently used, unexpired
  token of the authenticating user. If that token expires within the configured
- levels (default {WARN} at 30 days, {CRIT} at 7 days) the service changes state.
+ levels (default {WARN} at 14 days, {CRIT} at 7 days) the service changes state.
  If the choice is not unambiguous the text says "probable".
 
  The API token is never part of any output.

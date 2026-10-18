@@ -132,6 +132,12 @@ def good_routes():
         "/api/peers": fixture("peers.json"),
         "/api/networks": fixture("networks.json"),
         "/api/networks/routers": fixture("routers.json"),
+        "/api/instance/version": {
+            "dashboard_available_version": "2.28.0",
+            "management_available_version": "0.64.1",
+            "management_current_version": "0.64.0",
+            "management_update_available": True,
+        },
     }
 
 
@@ -151,7 +157,8 @@ def test_full_run_emits_all_sections():
     client, opener = make_client(good_routes())
     out = sections(agent.run(args(), client, now=NOW))
 
-    assert set(out) == {"netbird_api", "netbird_tokens", "netbird_networks", "netbird_reference_version"}
+    assert set(out) == {"netbird_api", "netbird_tokens", "netbird_networks", "netbird_reference_version",
+                       "netbird_instance_version"}
     assert out["netbird_api"][0]["ok"] is True
     assert out["netbird_api"][0]["counts"]["tokens"] == 3
     paths = [r.full_url for r in opener.requests]
@@ -429,7 +436,8 @@ def test_cli_end_to_end(server):
     assert proc.returncode == 0, proc.stderr
     assert SECRET not in proc.stdout and SECRET not in proc.stderr
     out = sections(proc.stdout.splitlines())
-    assert set(out) == {"netbird_api", "netbird_tokens", "netbird_networks", "netbird_reference_version"}
+    assert set(out) == {"netbird_api", "netbird_tokens", "netbird_networks", "netbird_reference_version",
+                       "netbird_instance_version"}
 
 
 def test_cli_wrong_token_reports_auth_error_without_leaking(server):
@@ -479,3 +487,23 @@ def test_cli_unreadable_password_store_does_not_traceback():
     )
     assert proc.returncode != 0
     assert "Traceback" not in proc.stderr
+
+
+# ------------------------------------------------------- instance version
+def test_instance_version_section():
+    client, _ = make_client(good_routes())
+    row = sections(agent.run(args(), client, now=NOW))["netbird_instance_version"][0]
+    assert row["ok"] is True
+    assert row["management_current_t"] == [0, 64, 0] and row["management_available_t"] == [0, 64, 1]
+    assert row["dashboard_available"] == "2.28.0" and row["update_available"] is True
+
+
+@pytest.mark.parametrize("error", [http_error(404), http_error(403), http_error(500), b"nonsense"])
+def test_instance_version_failure_does_not_break_the_run(error):
+    routes = good_routes()
+    routes["/api/instance/version"] = error
+    client, _ = make_client(routes)
+    out = sections(agent.run(args(), client, now=NOW))
+    assert out["netbird_api"][0]["ok"] is True and out["netbird_api"][0]["partial"] == []
+    assert out["netbird_instance_version"][0]["ok"] is False
+    assert out["netbird_tokens"] and out["netbird_networks"]

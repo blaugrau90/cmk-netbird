@@ -1,0 +1,28 @@
+title: NetBird: Management Server Version
+agents: netbird
+catalog: cloud/netbird
+license: GPLv3
+distribution: cmk-netbird (community)
+
+item:
+ None. There is one service per NetBird account (Checkmk host).
+
+description:
+ This check compares the version of the NetBird management server with the latest
+ available version, both taken from the API call {GET /api/instance/version}.
+
+ The service is {OK} if the management server is up to date. If an update is
+ available, NetBird is at 0.x, so the minor version counts: one minor version
+ behind is {WARN} (default), three or more behind is {CRIT} (default), a lower
+ major version is {CRIT} (default). If only a patch update is available the
+ service is {OK} by default; the state can be configured. The latest dashboard
+ version is shown as additional information.
+
+ If the API does not provide this information (for example on installations or
+ versions without that endpoint) the service is {UNKNOWN}. No service is created
+ at all if the endpoint was not available during discovery.
+
+ The check on the routing peers is separate, see the check {NetBird Network}.
+
+discovery:
+ One service is created if the instance version could be read.

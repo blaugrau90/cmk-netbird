@@ -15,11 +15,12 @@ The plugin is strictly read-only: the special agent only issues `GET` requests.
 
 - One service **NetBird API**: reachability of the API with clear error texts (timeout, 401/403, rate limit, 5xx, invalid JSON). Partial failures (e.g. the tokens of one user cannot be read) turn it WARN while everything else keeps being monitored. It also warns when the agent's *own* token is about to expire.
 - One service per token, **NetBird Token \<user\>/\<token\>**:
-  - remaining lifetime (default WARN ≤ 30 days, CRIT ≤ 7 days, expired = CRIT)
+  - remaining lifetime (default WARN ≤ 14 days, CRIT ≤ 7 days, expired = CRIT)
   - unused since (default WARN ≥ 90 days, no CRIT). A token that was never used counts from its creation date and the text says "never used".
   - option to ignore tokens that have been expired for more than X days
   - regular expression on the token name to include/exclude tokens at discovery (e.g. spare tokens)
   - optionally tokens of regular users (shown as `[user] name/token`), default is service users only
+- One service **NetBird Management Version**: the running management server version against the latest available one, from `GET /api/instance/version` (minor versions behind: WARN ≥ 1, CRIT ≥ 3; patch-only update: OK by default). No service is created if the endpoint is not available.
 - One service per network, **NetBird Network \<name\>** (for networks with at least one enabled router):
   - all active routing peers online → OK, some offline → WARN, none online (also with a single router) → CRIT
   - routers bound to *peer groups* are resolved to peers; a peer counts once
@@ -42,6 +43,7 @@ NetBird has no endpoint that lists all tokens of an account, so the agent lists 
 | `GET /api/users/{id}/tokens` | tokens per user |
 | `GET /api/users/current` | find the agent's own token (best effort, failure is ignored) |
 | `GET /api/peers` | peer state, groups, version |
+| `GET /api/instance/version` | management server version (optional, failure is ignored) |
 | `GET /api/networks`, `GET /api/networks/routers` | networks and routers |
 | `GET /api/networks/{id}/routers` | only if a network's router list is empty |
 | `GET https://api.github.com/repos/netbirdio/netbird/releases/latest` | reference version (optional); the NetBird token is **not** sent there |
@@ -54,11 +56,11 @@ NetBird Cloud allows 120 requests per minute; the agent needs roughly *number of
 
 ## Installation
 
-1. Download `netbird-0.1.0.mkp` (or build it, see below).
+1. Download `netbird-0.2.0.mkp` (or build it, see below).
 2. In Checkmk: **Setup → Extension Packages → Upload package**, or as site user:
 
    ```bash
-   mkp add netbird-0.1.0.mkp
+   mkp add netbird-0.2.0.mkp
    mkp enable netbird
    ```
 
@@ -107,6 +109,7 @@ Versions that cannot be parsed (empty, `development`) never raise an alert; the 
 | Agents → Other integrations → **NetBird** | connection, token, proxy, user scope, reference version |
 | Service monitoring rules → **NetBird API** | levels for the agent's own token |
 | Service monitoring rules → **NetBird token** | remaining lifetime, unused-since, ignore long-expired |
+| Service monitoring rules → **NetBird management version** | minor-version levels, major-version state, state for a patch update |
 | Service monitoring rules → **NetBird network** | minor-version levels, state for a major-version difference |
 | Discovery rules → **NetBird token discovery** | include/exclude tokens by name (regular expression) |
 
@@ -121,9 +124,9 @@ Checkmk check cycle
   └─ special agent  agent_netbird  (runs on the Checkmk site, GET only)
        ├─ users → tokens per user → peers → networks → network routers → reference version
        ├─ resolves router peer groups to peers, normalises timestamps and versions
-       └─ prints four sections, one JSON object per line
-  └─ sections: netbird_api  netbird_tokens  netbird_networks  netbird_reference_version
-  └─ check plugins: netbird_api · netbird_token · netbird_network
+       └─ prints five sections, one JSON object per line
+  └─ sections: netbird_api  netbird_tokens  netbird_networks  netbird_reference_version  netbird_instance_version
+  └─ check plugins: netbird_api · netbird_token · netbird_network · netbird_version
 ```
 
 If the tokens of one user cannot be read (e.g. HTTP 403), that user's token services show "Item not found" and **NetBird API** is WARN and names the user.
@@ -162,9 +165,9 @@ netbird/
 ├── libexec/agent_netbird                 # Special agent (stdlib only)
 ├── server_side_calls/special_agent.py    # Builds the agent call
 ├── rulesets/netbird.py                   # Agent rule, check rules, discovery rule
-├── agent_based/netbird.py                # Sections and 3 check plugins
+├── agent_based/netbird.py                # Sections and 4 check plugins
 ├── graphing/netbird.py                   # Metrics and graphs
-└── checkman/                             # Man pages for the 3 checks
+└── checkman/                             # Man pages for the 4 checks
 packages/netbird                          # MKP manifest
 tests/                                    # pytest unit tests and JSON fixtures
 build_mkp.sh · lint.sh

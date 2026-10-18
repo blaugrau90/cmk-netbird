@@ -8,7 +8,8 @@ Checkmk agent sections (one JSON object per line):
     netbird_api                 connectivity / partial failures / own token
     netbird_tokens              one line per personal access token
     netbird_networks            one line per network incl. resolved routing peers
-    netbird_reference_version   reference NetBird version for the version check
+    netbird_reference_version   reference NetBird version for the peer version check
+    netbird_instance_version    management/dashboard version of the instance
 
 The API token is never printed. All error texts pass through redact().
 """
@@ -393,6 +394,30 @@ def collect_reference_version(
     return result
 
 
+def collect_instance_version(client: Client) -> dict[str, Any]:
+    """Management/dashboard version of the NetBird instance (never raises)."""
+    try:
+        data = client.get_json("/api/instance/version")
+    except ApiError as exc:
+        return {"ok": False, "error": exc.message, "error_kind": exc.kind}
+    if not isinstance(data, dict):
+        return {"ok": False, "error": "unexpected response (expected an object)", "error_kind": "invalid_json"}
+
+    def version(key: str) -> list[int] | None:
+        parsed = parse_version(data.get(key))
+        return list(parsed) if parsed else None
+
+    return {
+        "ok": True,
+        "management_current": data.get("management_current_version"),
+        "management_current_t": version("management_current_version"),
+        "management_available": data.get("management_available_version"),
+        "management_available_t": version("management_available_version"),
+        "dashboard_available": data.get("dashboard_available_version"),
+        "update_available": data.get("management_update_available"),
+    }
+
+
 def collect_own_token(client: Client, tokens: list[dict[str, Any]], now: float) -> dict[str, Any] | None:
     """Best-effort: find the token this agent authenticates with.
 
@@ -453,6 +478,7 @@ def run(args: argparse.Namespace, client: Client, now: float | None = None) -> l
     emit("netbird_tokens", tokens + token_errors)
     emit("netbird_networks", networks)
     emit("netbird_reference_version", [reference])
+    emit("netbird_instance_version", [collect_instance_version(client)])
     return out
 
 

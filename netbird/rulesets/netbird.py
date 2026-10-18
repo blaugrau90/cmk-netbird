@@ -184,7 +184,7 @@ def _api_formspec() -> Dictionary:
                     ),
                     form_spec_template=TimeSpan(displayed_magnitudes=_DAYS),
                     level_direction=LevelDirection.LOWER,
-                    prefill_fixed_levels=DefaultValue((30 * DAY, 7 * DAY)),
+                    prefill_fixed_levels=DefaultValue((14 * DAY, 7 * DAY)),
                 ),
             ),
         },
@@ -211,7 +211,7 @@ def _token_formspec() -> Dictionary:
                     help_text=Help("Alert when the token expires within this time."),
                     form_spec_template=TimeSpan(displayed_magnitudes=_DAYS),
                     level_direction=LevelDirection.LOWER,
-                    prefill_fixed_levels=DefaultValue((30 * DAY, 7 * DAY)),
+                    prefill_fixed_levels=DefaultValue((14 * DAY, 7 * DAY)),
                 ),
             ),
             "unused_warn": DictElement(
@@ -294,6 +294,50 @@ rule_spec_netbird_network_params = CheckParameters(
     title=Title("NetBird network"),
     parameter_form=_network_formspec,
     condition=HostAndItemCondition(item_title=Title("Network name")),
+)
+
+
+def _version_formspec() -> Dictionary:
+    return Dictionary(
+        title=Title("NetBird management version"),
+        help_text=Help(
+            "Compares the running management server version with the latest available one "
+            "(from GET /api/instance/version). NetBird is at 0.x, so the minor version counts."
+        ),
+        elements={
+            "minor_levels": DictElement(
+                required=True,
+                parameter_form=SimpleLevels(
+                    title=Title("Minor versions behind the latest version"),
+                    form_spec_template=Integer(),
+                    level_direction=LevelDirection.UPPER,
+                    prefill_fixed_levels=DefaultValue((1, 3)),
+                ),
+            ),
+            "major_state": DictElement(
+                required=True,
+                parameter_form=ServiceState(
+                    title=Title("State if the management server is a major version behind"),
+                    prefill=DefaultValue(ServiceState.CRIT),
+                ),
+            ),
+            "update_state": DictElement(
+                required=True,
+                parameter_form=ServiceState(
+                    title=Title("State if only a patch update is available"),
+                    prefill=DefaultValue(ServiceState.OK),
+                ),
+            ),
+        },
+    )
+
+
+rule_spec_netbird_version_params = CheckParameters(
+    name="netbird_version",
+    topic=Topic.CLOUD,
+    title=Title("NetBird management version"),
+    parameter_form=_version_formspec,
+    condition=HostCondition(),
 )
 
 
