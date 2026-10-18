@@ -129,10 +129,11 @@ _API_ERROR_TEXT = {
 }
 
 
-def check_netbird_api(
-    params: Mapping[str, Any], section: dict[str, Any], now: float | None = None
-) -> CheckResult:
-    now = time.time() if now is None else now
+def check_netbird_api(params: Mapping[str, Any], section: dict[str, Any]) -> CheckResult:
+    yield from check_netbird_api_at(params, section, time.time())
+
+
+def check_netbird_api_at(params: Mapping[str, Any], section: dict[str, Any], now: float) -> CheckResult:
     if not section.get("ok"):
         kind = section.get("error_kind") or ""
         prefix = _API_ERROR_TEXT.get(kind, "API request failed")
@@ -214,12 +215,17 @@ def discover_netbird_token(params: Mapping[str, Any], section: dict[str, dict[st
 
 
 def check_netbird_token(
-    item: str, params: Mapping[str, Any], section: dict[str, dict[str, Any]], now: float | None = None
+    item: str, params: Mapping[str, Any], section: dict[str, dict[str, Any]]
+) -> CheckResult:
+    yield from check_netbird_token_at(item, params, section, time.time())
+
+
+def check_netbird_token_at(
+    item: str, params: Mapping[str, Any], section: dict[str, dict[str, Any]], now: float
 ) -> CheckResult:
     token = section.get(item)
     if token is None:
         return
-    now = time.time() if now is None else now
 
     # --- remaining lifetime ---
     expiry = token.get("expiration_ts")
@@ -393,13 +399,23 @@ def check_netbird_network(
     params: Mapping[str, Any],
     section_netbird_networks: dict[str, dict[str, Any]] | None,
     section_netbird_reference_version: dict[str, Any] | None,
-    now: float | None = None,
+) -> CheckResult:
+    yield from check_netbird_network_at(
+        item, params, section_netbird_networks, section_netbird_reference_version, time.time()
+    )
+
+
+def check_netbird_network_at(
+    item: str,
+    params: Mapping[str, Any],
+    section_netbird_networks: dict[str, dict[str, Any]] | None,
+    section_netbird_reference_version: dict[str, Any] | None,
+    now: float,
 ) -> CheckResult:
     networks = section_netbird_networks or {}
     network = networks.get(item)
     if network is None:
         return
-    now = time.time() if now is None else now
 
     peers = active_router_peers(network)
     online = [p for p in peers if p.get("connected")]

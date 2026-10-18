@@ -55,7 +55,7 @@ def section(**kw):
 
 def tcheck(params=None, now=NOW, **kw):
     sec = section(**kw)
-    return run(check.check_netbird_token("svc/agent", params or {}, sec, now=now))
+    return run(check.check_netbird_token_at("svc/agent", params or {}, sec, now))
 
 
 def test_parse_token_items_and_user_marker():
@@ -144,7 +144,7 @@ def test_custom_expiry_levels():
 
 
 def test_vanished_token_yields_nothing():
-    assert run(check.check_netbird_token("gone", {}, section(), now=NOW)) == []
+    assert run(check.check_netbird_token_at("gone", {}, section(), NOW)) == []
 
 
 # ---------------------------------------------------- token discovery filter
@@ -180,7 +180,7 @@ def api(**kw):
 
 
 def acheck(section, params=None):
-    return run(check.check_netbird_api(params or {}, section, now=NOW))
+    return run(check.check_netbird_api_at(params or {}, section, NOW))
 
 
 def test_api_ok():
@@ -255,7 +255,7 @@ def ref(version=(0, 60, 2), source="github", **kw):
 
 
 def ncheck(item, networks, reference=None, params=None):
-    return run(check.check_netbird_network(item, params or {}, networks, reference, now=NOW))
+    return run(check.check_netbird_network_at(item, params or {}, networks, reference, NOW))
 
 
 def test_network_all_online_ok():
@@ -417,3 +417,26 @@ def test_reference_configured():
 def test_parse_ignores_garbage_lines():
     assert check.parse_netbird_tokens([["not json"], [], [json.dumps(token())]]).keys() == {"svc/agent"}
     assert check.parse_netbird_api([]) is None
+
+
+# ------------------------------------------------- plugin registration contract
+def test_check_function_signatures_match_what_checkmk_expects():
+    """Checkmk validates the argument names of registered functions strictly."""
+    import inspect
+
+    def names(function):
+        return list(inspect.signature(function).parameters)
+
+    assert names(check.check_netbird_api) == ["params", "section"]
+    assert names(check.check_netbird_token) == ["item", "params", "section"]
+    assert names(check.check_netbird_network) == [
+        "item", "params", "section_netbird_networks", "section_netbird_reference_version"]
+    assert names(check.discover_netbird_api) == ["section"]
+    assert names(check.discover_netbird_token) == ["params", "section"]
+    assert names(check.discover_netbird_network) == [
+        "section_netbird_networks", "section_netbird_reference_version"]
+
+
+def test_public_check_functions_run_with_the_current_time():
+    sec = section(expiration_ts=2e9, last_used_ts=None, created_ts=None)
+    assert results(check.check_netbird_token("svc/agent", {}, sec))

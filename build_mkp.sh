@@ -45,7 +45,7 @@ def add_tar(outer: tarfile.TarFile, name: str, members: list[tuple[str, Path]]) 
             info.mode = 0o755 if path.name.startswith("agent_") else 0o644
             with path.open("rb") as handle:
                 tar.addfile(info, handle)
-    payload = gzip.compress(raw.getvalue(), mtime=0)
+    payload = raw.getvalue()  # inner part archives are plain tar, only the outer MKP is gzip
     info = tarfile.TarInfo(f"{name}.tar")
     info.size = len(payload)
     info.mtime = 0
@@ -58,7 +58,7 @@ def add_bytes(outer: tarfile.TarFile, name: str, data: bytes) -> None:
     outer.addfile(info, io.BytesIO(data))
 
 target = out_dir / f"{manifest['name']}-{manifest['version']}.mkp"
-with tarfile.open(target, "w") as outer:
+with gzip.GzipFile(target, "wb", mtime=0) as gz, tarfile.open(fileobj=gz, mode="w") as outer:
     add_bytes(outer, "info", (repr(manifest) + "\n").encode())
     add_bytes(outer, "info.json", json.dumps(manifest).encode())
     for part, files in manifest["files"].items():
