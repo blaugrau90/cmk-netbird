@@ -13,13 +13,13 @@ The plugin is strictly read-only: the special agent only issues `GET` requests.
 
 ## Features
 
-- One service **NetBird API**: reachability of the API with clear error texts (timeout, 401/403, rate limit, 5xx, invalid JSON). Partial failures (e.g. the tokens of one user cannot be read) turn it WARN while everything else keeps being monitored. It also warns when the agent's *own* token is about to expire.
-- One service per token, **NetBird Token \<user\>/\<token\>**:
+- One service **NetBird API**: reachability of the API with clear error texts (timeout, 401/403, rate limit, 5xx, invalid JSON). Partial failures (e.g. the tokens of one service user cannot be read) turn it WARN while everything else keeps being monitored. It also warns when the agent's *own* token is about to expire.
+- One service per token, **NetBird Token \<service user\>/\<token\>**:
   - remaining lifetime (default WARN ≤ 14 days, CRIT ≤ 7 days, expired = CRIT)
   - unused since (default WARN ≥ 90 days, no CRIT). A token that was never used counts from its creation date and the text says "never used".
   - option to ignore tokens that have been expired for more than X days
   - regular expression on the token name to include/exclude tokens at discovery (e.g. spare tokens)
-  - only tokens of **service users** are monitored; tokens of regular users are not read
+  - only tokens of **service users** are monitored (see below)
 - One service **NetBird Management Version**: the running management server version against the latest available one, from `GET /api/instance/version` (minor versions behind: WARN ≥ 1, CRIT ≥ 3; patch-only update: OK by default). No service is created if the endpoint is not available.
 - One service per network, **NetBird Network \<name\>** (for networks with at least one enabled router):
   - all active routing peers online → OK, some offline → WARN, none online (also with a single router) → CRIT
@@ -34,21 +34,23 @@ The plugin is strictly read-only: the special agent only issues `GET` requests.
 
 Use a **service user** and create a personal access token for it (Team → Service Users in the NetBird dashboard).
 
-NetBird has no endpoint that lists all tokens of an account, so the agent lists users and then asks for the tokens of **each user** (`GET /api/users/{id}/tokens`). Reading other users' tokens needs an administrative role. The endpoints used:
+NetBird has no endpoint that lists all tokens of an account, so the agent lists the **service users** and then asks for the tokens of **each service user** (`GET /api/users/{id}/tokens`).
+
+**Tokens of regular users are deliberately not monitored.** Reading the tokens of other users requires the **Owner** role, and this plugin is primarily about service users, so it does without it. The endpoints used:
 
 | Endpoint | Purpose |
 |---|---|
-| `GET /api/users?service_user=true` | users |
-| `GET /api/users/{id}/tokens` | tokens per user |
+| `GET /api/users?service_user=true` | service users |
+| `GET /api/users/{id}/tokens` | tokens per service user |
 | `GET /api/users/current` | find the agent's own token (best effort, failure is ignored) |
 | `GET /api/peers` | peer state, groups, version |
 | `GET /api/instance/version` | management server version (optional, failure is ignored) |
 | `GET /api/networks`, `GET /api/networks/routers` | networks and routers |
 | `GET /api/networks/{id}/routers` | only if a network's router list is empty |
 
-The service user needs a role that is allowed to read users, tokens, peers and networks.
+The service user whose token the agent uses must be allowed to read service users, their tokens, peers and networks.
 
-NetBird Cloud allows 120 requests per minute; the agent needs roughly *number of users + 6* requests per run.
+NetBird Cloud allows 120 requests per minute; the agent needs roughly *number of service users + 6* requests per run.
 
 ---
 
@@ -80,7 +82,7 @@ NetBird Cloud allows 120 requests per minute; the agent needs roughly *number of
 
 | Rule (Setup → …) | Purpose |
 |---|---|
-| Agents → Other integrations → **NetBird** | connection, token, proxy, user scope |
+| Agents → Other integrations → **NetBird** | connection, token, proxy |
 | Service monitoring rules → **NetBird API** | levels for the agent's own token |
 | Service monitoring rules → **NetBird token** | remaining lifetime, unused-since, ignore long-expired |
 | Service monitoring rules → **NetBird management version** | minor-version levels, major-version state, state for a patch update |
@@ -95,14 +97,14 @@ All texts are English (the reference plugins are English-only as well).
 ```
 Checkmk check cycle
   └─ special agent  agent_netbird  (runs on the Checkmk site, GET only)
-       ├─ users → tokens per user → peers → networks → network routers → instance version
+       ├─ service users → tokens per service user → peers → networks → network routers → instance version
        ├─ resolves router peer groups to peers, normalises timestamps and versions
        └─ prints four sections, one JSON object per line
   └─ sections: netbird_api  netbird_tokens  netbird_networks  netbird_instance_version
   └─ check plugins: netbird_api · netbird_token · netbird_network · netbird_version
 ```
 
-If the tokens of one user cannot be read (e.g. HTTP 403), that user's token services show "Item not found" and **NetBird API** is WARN and names the user.
+If the tokens of one service user cannot be read (e.g. HTTP 403), that user's token services show "Item not found" and **NetBird API** is WARN and names the user.
 
 If the API cannot be queried at all the agent still exits 0 and prints only `netbird_api` with the error, so the failure shows up in the **NetBird API** service. Other services of the host then go stale.
 
