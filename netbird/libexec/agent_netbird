@@ -247,7 +247,6 @@ def collect_tokens(
         base = {
             "user_id": user["id"],
             "user_name": user_name,
-            "is_service_user": bool(user.get("is_service_user")),
         }
         if isinstance(result, ApiError):
             partial.append(f"tokens of {user_name}: {result.message}")
@@ -416,8 +415,7 @@ def run(args: argparse.Namespace, client: Client, now: float | None = None) -> l
         out.extend(json.dumps(row, ensure_ascii=False, sort_keys=True) for row in rows)
 
     try:
-        users_path = "/api/users" if args.include_users else "/api/users?service_user=true"
-        users = _as_list(client.get_json(users_path), "users")
+        users = _as_list(client.get_json("/api/users?service_user=true"), "users")
         tokens, partial, token_errors = collect_tokens(client, users)
         peers = _as_list(client.get_json("/api/peers"), "peers")
         networks, net_partial = collect_networks(client, peers)
@@ -465,7 +463,6 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--no-verify-ssl", action="store_true")
     parser.add_argument("--proxy", default=None, help="Proxy URL")
     parser.add_argument("--no-proxy", action="store_true", help="Connect directly, ignore environment proxies")
-    parser.add_argument("--include-users", action="store_true", help="Also read tokens of regular users")
     args = parser.parse_args(argv)
 
     try:

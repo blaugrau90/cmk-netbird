@@ -5,8 +5,7 @@ license: GPLv3
 distribution: cmk-netbird (community)
 
 item:
- {User}/{Token name} for service users, {[user] User}/{Token name} for regular users
- (only if enabled in the special agent rule).
+ {Service user}/{Token name}.
 
 description:
  This check monitors one NetBird personal access token. Two conditions are

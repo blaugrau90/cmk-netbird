@@ -199,8 +199,7 @@ def parse_netbird_tokens(string_table: StringTable) -> dict[str, dict[str, Any]]
     for row in _json_rows(string_table):
         if row.get("read_error") or not row.get("user_name") or not row.get("name"):
             continue
-        marker = "" if row.get("is_service_user") else "[user] "
-        rows.append((f"{marker}{row['user_name']}/{row['name']}", str(row.get("token_id") or ""), row))
+        rows.append((f"{row['user_name']}/{row['name']}", str(row.get("token_id") or ""), row))
     return _unique_items(rows)
 
 

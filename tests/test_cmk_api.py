@@ -44,9 +44,9 @@ def test_defaults_command_line_uses_password_store_reference_only():
 def test_all_options():
     args = command({
         "token": Secret(1), "base_url": "https://nb.example", "verify_ssl": False, "timeout": 10,
-        "proxy": URLProxy(url="http://proxy:3128"), "include_users": True,
+        "proxy": URLProxy(url="http://proxy:3128"),
     })
-    assert "--no-verify-ssl" in args and "--include-users" in args
+    assert "--no-verify-ssl" in args
     assert args[args.index("--proxy") + 1] == "http://proxy:3128"
     assert "--reference-source" not in args
     assert args[args.index("--base-url") + 1] == "https://nb.example"

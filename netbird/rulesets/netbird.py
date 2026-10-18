@@ -101,18 +101,6 @@ def _special_agent_formspec() -> Dictionary:
                     migrate=migrate_to_proxy,
                 ),
             ),
-            "include_users": DictElement(
-                required=False,
-                parameter_form=BooleanChoice(
-                    title=Title("Include tokens of regular users"),
-                    label=Label("Also monitor personal access tokens of regular (non-service) users"),
-                    help_text=Help(
-                        "By default only tokens of service users are read. Reading the tokens "
-                        "of regular users needs an admin/owner role and one extra request per user."
-                    ),
-                    prefill=DefaultValue(False),
-                ),
-            ),
         },
     )
 

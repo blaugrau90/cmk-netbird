@@ -41,7 +41,7 @@ def text(gen):
 # ----------------------------------------------------------------- tokens
 def token(**kw):
     base = {
-        "user_id": "u1", "user_name": "svc", "is_service_user": True, "token_id": "t1",
+        "user_id": "u1", "user_name": "svc", "token_id": "t1",
         "name": "agent", "expiration_ts": NOW + 100 * DAY, "created_ts": NOW - 10 * DAY,
         "last_used_ts": NOW - 1 * DAY,
     }
@@ -60,10 +60,10 @@ def tcheck(params=None, now=NOW, **kw):
 
 def test_parse_token_items_and_user_marker():
     sec = check.parse_netbird_tokens(
-        table(token(), token(user_name="Alice", is_service_user=False, token_id="t2"),
+        table(token(), token(user_name="Alice", token_id="t2"),
               {"user_id": "u9", "user_name": "broken", "read_error": "HTTP 403"})
     )
-    assert set(sec) == {"svc/agent", "[user] Alice/agent"}
+    assert set(sec) == {"svc/agent", "Alice/agent"}
 
 
 def test_parse_token_colliding_items_get_suffix():

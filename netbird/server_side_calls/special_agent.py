@@ -21,7 +21,6 @@ class Params(BaseModel):
     verify_ssl: bool = True
     timeout: int = 30
     proxy: URLProxy | NoProxy | EnvProxy | None = None
-    include_users: bool = False
 
 
 def _agent_arguments(
@@ -41,8 +40,6 @@ def _agent_arguments(
         args += ["--proxy", params.proxy.url]
     elif isinstance(params.proxy, NoProxy):
         args.append("--no-proxy")
-    if params.include_users:
-        args.append("--include-users")
 
     yield SpecialAgentCommand(command_arguments=args)
 

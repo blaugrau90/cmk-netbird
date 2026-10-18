@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.0] — unreleased
+
+- Removed tokens of regular users: only service-user tokens are monitored. The option "Include tokens of regular users" and the `[user]` item prefix are gone.
+
 ## [0.3.0] — unreleased
 
 - Removed the version check of routing peers, including the GitHub release lookup and the reference-version option. The agent no longer needs internet access; the management server version is covered by **NetBird Management Version**. The rule "NetBird network" is gone, as it only held version levels.

@@ -116,7 +116,7 @@ def make_client(routes, sleeps=None):
 
 
 def args(**overrides):
-    base = dict(include_users=False)
+    base = {}
     base.update(overrides)
     return argparse.Namespace(**base)
 
@@ -162,17 +162,7 @@ def test_full_run_emits_all_sections():
     assert out["netbird_api"][0]["counts"]["tokens"] == 3
     paths = [r.full_url for r in opener.requests]
     assert "https://nb.example/api/users?service_user=true" in paths
-    assert not any("usr1" in p for p in paths)  # regular users excluded by default
-
-
-def test_include_users_reads_all_user_tokens():
-    client, _ = make_client(good_routes())
-    out = sections(agent.run(args(include_users=True), client, now=NOW))
-    names = {t["name"] for t in out["netbird_tokens"]}
-    assert "laptop" in names
-    laptop = next(t for t in out["netbird_tokens"] if t["name"] == "laptop")
-    assert laptop["is_service_user"] is False
-    assert laptop["last_used_ts"] is None
+    assert not any("usr1" in p for p in paths)  # tokens of regular users are never read
 
 
 def test_token_timestamps_normalised():

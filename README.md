@@ -19,7 +19,7 @@ The plugin is strictly read-only: the special agent only issues `GET` requests.
   - unused since (default WARN ≥ 90 days, no CRIT). A token that was never used counts from its creation date and the text says "never used".
   - option to ignore tokens that have been expired for more than X days
   - regular expression on the token name to include/exclude tokens at discovery (e.g. spare tokens)
-  - optionally tokens of regular users (shown as `[user] name/token`), default is service users only
+  - only tokens of **service users** are monitored; tokens of regular users are not read
 - One service **NetBird Management Version**: the running management server version against the latest available one, from `GET /api/instance/version` (minor versions behind: WARN ≥ 1, CRIT ≥ 3; patch-only update: OK by default). No service is created if the endpoint is not available.
 - One service per network, **NetBird Network \<name\>** (for networks with at least one enabled router):
   - all active routing peers online → OK, some offline → WARN, none online (also with a single router) → CRIT
@@ -38,7 +38,7 @@ NetBird has no endpoint that lists all tokens of an account, so the agent lists 
 
 | Endpoint | Purpose |
 |---|---|
-| `GET /api/users?service_user=true` (without the filter if regular users are included) | users |
+| `GET /api/users?service_user=true` | users |
 | `GET /api/users/{id}/tokens` | tokens per user |
 | `GET /api/users/current` | find the agent's own token (best effort, failure is ignored) |
 | `GET /api/peers` | peer state, groups, version |
@@ -54,11 +54,11 @@ NetBird Cloud allows 120 requests per minute; the agent needs roughly *number of
 
 ## Installation
 
-1. Download `netbird-0.3.0.mkp` (or build it, see below).
+1. Download `netbird-0.4.0.mkp` (or build it, see below).
 2. In Checkmk: **Setup → Extension Packages → Upload package**, or as site user:
 
    ```bash
-   mkp add netbird-0.3.0.mkp
+   mkp add netbird-0.4.0.mkp
    mkp enable netbird
    ```
 
@@ -73,7 +73,6 @@ NetBird Cloud allows 120 requests per minute; the agent needs roughly *number of
 | Verify SSL certificate | on by default |
 | Request timeout | per request, default 30 s |
 | Proxy | optional HTTP/HTTPS proxy (the default uses the environment) |
-| Include tokens of regular users | off by default |
 
 6. Run service discovery on the host. Enable periodic service discovery so new tokens and networks show up on their own.
 
